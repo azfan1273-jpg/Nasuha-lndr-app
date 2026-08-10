@@ -4,8 +4,6 @@ import 'screens/auth_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // Inisialisasi Supabase
   await SupabaseService.init();
 
   runApp(const LndrKasirApp());
@@ -23,7 +21,7 @@ class LndrKasirApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2563EB)),
         useMaterial3: true,
       ),
-      home: AuthScreen(), // Tanpa kata const
+      home: const AuthScreen(),
     );
   }
 }
