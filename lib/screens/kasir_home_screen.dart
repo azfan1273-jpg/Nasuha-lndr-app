@@ -1,4 +1,6 @@
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:pocketbase/pocketbase.dart';
+import '../main.dart'; // <--- Agar variabel 'pb' dari main.dart terbaca di sini!
+//import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -4207,8 +4209,94 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     super.dispose();
   }
 
-  // 1. TARIK DATA SETTINGS & PERMISSION REALTIME DARI SUPABASE
+  // 1. TARIK DATA DARI SERVER LOKAL POCKETBASE
   Future<void> _loadSettingsFromSupabase() async {
+      try {
+        print('>>> MEMUAT DATA DARI POCKETBASE LOKAL...');
+        
+        // Ambil semua data store_settings tanpa filter email dulu (biar pasti dapet data pertama)
+        final result = await pb.collection('store_settings').getList(
+          page: 1,
+          perPage: 1,
+        );
+  
+        print('>>> HASIL FETCH POCKETBASE: ${result.items.length} record ditemukan');
+  
+        if (result.items.isNotEmpty) {
+          final data = result.items.first.data;
+          print('>>> DATA TERAMBIL: $data');
+  
+          if (mounted) {
+            setState(() {
+              _targetOmset = (data['target_omset'] as num?)?.toDouble() ?? 15000000;
+              _isManager = data['is_manager'] ?? false;
+              _canViewReport = data['can_view_report'] ?? true;
+              _canManageServices = data['can_manage_services'] ?? false;
+              _canRecordExpense = data['can_record_expense'] ?? true;
+              _canEditDeleteOrder = data['can_edit_delete_order'] ?? false;
+            });
+          }
+        } else {
+          print('>>> POCKETBASE KOSONG: Menggunakan nilai default');
+        }
+      } catch (e) {
+        print('>>> ERROR LOAD POCKETBASE: $e');
+      } finally {
+        if (mounted) setState(() => _isLoadingTarget = false);
+      }
+    }
+
+  // 2. SIMPAN TARGET OMSET REALTIME KE SERVER LOKAL
+  Future<void> _updateTarget() async {
+      final cleanInput = _targetController.text.replaceAll('.', '').replaceAll(',', '');
+      final newTarget = double.tryParse(cleanInput);
+  
+      if (newTarget != null && newTarget > 0) {
+        try {
+          print('>>> MEMPROSES SIMPAN TARGET: $newTarget');
+  
+          // 1. Cek apakah record sudah ada
+          final result = await pb.collection('store_settings').getList(
+            page: 1,
+            perPage: 1,
+          );
+  
+          if (result.items.isNotEmpty) {
+            // UPDATE DATA YANG SUDAH ADA
+            final id = result.items.first.id;
+            await pb.collection('store_settings').update(id, body: {
+              'target_omset': newTarget,
+            });
+            print('>>> BERHASIL UPDATE RECORD ID: $id');
+          } else {
+            // BUAT DATA BARU JIKA TABEL MASIH KOSONG
+            final newRecord = await pb.collection('store_settings').create(body: {
+              'user_email': widget.userEmail,
+              'target_omset': newTarget,
+            });
+            print('>>> BERHASIL CREATE RECORD BARU ID: ${newRecord.id}');
+          }
+  
+          if (mounted) {
+            setState(() {
+              _targetOmset = newTarget;
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Target tersimpan di Server Lokal: Rp ${newTarget.toInt()}'),
+                backgroundColor: const Color(0xFF16A34A),
+              ),
+            );
+          }
+          _targetController.clear();
+        } catch (e) {
+          print('>>> ERROR SAAT SIMPAN KE POCKETBASE: $e');
+        }
+      }
+    }
+
+  // 1. TARIK DATA SETTINGS & PERMISSION REALTIME DARI SUPABASE
+  /* Future<void> _loadSettingsFromSupabase() async {
     try {
       final response = await Supabase.instance.client
           .from('store_settings')
@@ -4284,6 +4372,27 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
       });
     } catch (e) {
       debugPrint('Gagal update permission ke Supabase: $e');
+    }
+  }*/
+  Future<void> _togglePermission(String key, bool value) async {
+    try {
+      // Cek apakah record store_settings user ini sudah ada
+      final existing = await pb
+          .collection('store_settings')
+          .getList(filter: 'user_email = "${widget.userEmail}"');
+
+      if (existing.items.isNotEmpty) {
+        final recordId = existing.items.first.id;
+        await pb
+            .collection('store_settings')
+            .update(recordId, body: {key: value});
+      } else {
+        await pb
+            .collection('store_settings')
+            .create(body: {'user_email': widget.userEmail, key: value});
+      }
+    } catch (e) {
+      debugPrint('Gagal update permission ke PocketBase: $e');
     }
   }
 
