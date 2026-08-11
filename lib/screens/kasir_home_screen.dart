@@ -32,6 +32,35 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
   // --- STATE PENAMPUNG TRANSAKSI HARI INI ---
   final List<Map<String, dynamic>> _ordersHariIni = [];
 
+  @override
+    void initState() {
+      super.initState();
+      _loadOrdersFromPocketBase();
+    }
+  
+    Future<void> _loadOrdersFromPocketBase() async {
+      try {
+        final records = await pb.collection('orders').getFullList(sort: '-created');
+        if (mounted) {
+          setState(() {
+            _ordersHariIni.clear();
+            for (var item in records) {
+              _ordersHariIni.add({
+                'id': item.id,
+                'customer': item.data['customer_name'] ?? 'Pelanggan',
+                'phone': '-',
+                'total': (item.data['total'] as num?)?.toDouble() ?? 0.0,
+                'itemCount': (item.data['items'] as List?)?.length ?? 1,
+                'status': item.data['status'] ?? 'Antrian',
+              });
+            }
+          });
+        }
+      } catch (e) {
+        debugPrint('Gagal load orders dari PocketBase: $e');
+      }
+    }
+
   // Helper untuk menghitung total belanja di keranjang
   double get _totalPrice {
     return _cartItems.fold(0.0, (sum, item) => sum + (item['total'] as double));
@@ -641,30 +670,44 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                                 borderRadius: BorderRadius.circular(8),
                               ),
                             ),
-                            onPressed:
-                                _cartItems.isEmpty || _selectedCustomer == null
+                            onPressed: _cartItems.isEmpty || _selectedCustomer == null
                                 ? null
-                                : () {
-                                    setState(() {
-                                      _ordersHariIni.insert(0, {
-                                        'customer': _selectedCustomer!['name'],
-                                        'phone': _selectedCustomer!['phone'],
+                                : () async {
+                                    try {
+                                      // 1. SIMPAN PERMANEN KE POCKETBASE LOKAL
+                                      final newRecord = await pb.collection('orders').create(body: {
+                                        'customer_name': _selectedCustomer!['name'],
                                         'total': totalSetelahDiskon,
-                                        'itemCount': _cartItems.length,
                                         'status': 'Antrian',
+                                        'payment_method': 'Cash',
+                                        'items': _cartItems,
                                       });
-                                      _cartItems.clear();
-                                      _selectedCustomer = null;
-                                    });
-
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Order Transaksi Berhasil Dibuat!',
-                                        ),
-                                      ),
-                                    );
-                                    Navigator.pop(context);
+                            
+                                      // 2. MASUKKAN KE LIST TAMPILAN SCREEN
+                                      setState(() {
+                                        _ordersHariIni.insert(0, {
+                                          'id': newRecord.id,
+                                          'customer': _selectedCustomer!['name'],
+                                          'phone': _selectedCustomer!['phone'],
+                                          'total': totalSetelahDiskon,
+                                          'itemCount': _cartItems.length,
+                                          'status': 'Antrian',
+                                        });
+                                        _cartItems.clear();
+                                        _selectedCustomer = null;
+                                      });
+                            
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Order Transaksi Berhasil Dibuat & Tersimpan!'),
+                                          ),
+                                        );
+                                        Navigator.pop(context);
+                                      }
+                                    } catch (e) {
+                                      debugPrint('Error simpan order ke PocketBase: $e');
+                                    }
                                   },
                             child: const Text(
                               'PESAN',
@@ -2326,16 +2369,23 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                                 borderRadius: BorderRadius.circular(8),
                               ),
                             ),
-                            onPressed: () {
-                              setState(() {
-                                order['status'] = 'Proses';
-                              });
-                              Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Order dipindahkan ke Proses!'),
-                                ),
-                              );
+                            onPressed: () async {
+                              try {
+                                if (order['id'] != null) {
+                                  await pb.collection('orders').update(order['id'], body: {'status': 'Proses'});
+                                }
+                                setState(() {
+                                  order['status'] = 'Proses';
+                                });
+                                if (mounted) {
+                                  Navigator.pop(context);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Order dipindahkan ke Proses!')),
+                                  );
+                                }
+                              } catch (e) {
+                                debugPrint('Error update status ke PocketBase: $e');
+                              }
                             },
                             icon: const Icon(Icons.bolt, size: 16),
                             label: const Text(
@@ -2360,14 +2410,23 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                                 borderRadius: BorderRadius.circular(8),
                               ),
                             ),
-                            onPressed: () {
-                              setState(() {
-                                order['status'] = 'Selesai';
-                              });
-                              Navigator.pop(context);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Order Selesai!')),
-                              );
+                            onPressed: () async {
+                              try {
+                                if (order['id'] != null) {
+                                  await pb.collection('orders').update(order['id'], body: {'status': 'Selesai'});
+                                }
+                                setState(() {
+                                  order['status'] = 'Selesai';
+                                });
+                                if (mounted) {
+                                  Navigator.pop(context);
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Order Selesai!')),
+                                  );
+                                }
+                              } catch (e) {
+                                debugPrint('Error update status ke PocketBase: $e');
+                              }
                             },
                             icon: const Icon(Icons.check_circle, size: 16),
                             label: const Text(
