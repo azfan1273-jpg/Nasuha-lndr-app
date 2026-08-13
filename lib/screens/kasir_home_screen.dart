@@ -1,12 +1,20 @@
+
+//APLIKASI KASIR LAUNDRY - LNDR 
+
+// Kelompok Import Directive / Dependencies
+// Fungsinya "Memanggil Pustaka Library, Paket Pendukung, atau file Dart lain ke dlm file agar Fitur bisa di pakai"
 import '../helpers/database_helper.dart';
 import '../services/sync_service.dart';
 import 'package:pocketbase/pocketbase.dart';
-import '../main.dart'; // <--- Agar variabel 'pb' dari main.dart terbaca di sini!
-//import 'package:supabase_flutter/supabase_flutter.dart';
+import '../main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:lndr_kasir/providers/settings_provider.dart';
+
+// Class ( extends Statefulwidget )
+//Fungsinya: Mendefinisikan bahwa halaman ini adalah sebuah Widget yang memiliki status dinamis (bisa berubah-ubah UI-nya) secara realtime.
+//Prosesnya: Class ini bertindak sebagai "pintu masuk" widget dan memanggil method createState() untuk membuat instance dari class pendukungnya, yaitu _KasirHomeScreenState.
 
 class KasirHomeScreen extends StatefulWidget {
   const KasirHomeScreen({super.key});
@@ -15,121 +23,124 @@ class KasirHomeScreen extends StatefulWidget {
   State<KasirHomeScreen> createState() => _KasirHomeScreenState();
 }
 
+// Top-Level / Global Variable
+// Fungsinya: Tempat menampung array/daftar data sementara di luar class. Karena dideklarasikan di level paling atas (top-level),
+//  variabel ini bisa diakses dari mana saja di dalam file tersebut untuk menyimpan daftar layanan laundry yang ditarik dari PocketBase.
+
 List<Map<String, dynamic>> _serviceList = [];
-
-@override
-void initState() {
-  super.initState();
-  _loadOrdersFromPocketBase();
-  _loadServicesFromPocketBase(); // <-- Panggil load layanan
-}
-
-Future<void> _loadServicesFromPocketBase() async {
-  try {
-    final records = await pb.collection('services').getFullList(sort: 'name');
-    if (mounted) {
-      setState(() {
-        _serviceList = records.map((record) {
-          return {
-            'id': record.id,
-            'name': record.getStringValue('name'),
-            'price': record.getDoubleValue('price'),
-            'unit': record.getStringValue('unit'),
-            'est': record.getStringValue('estimasi'),
-            'category': record.getStringValue('category'),
-          };
-        }).toList();
-      });
-    }
-  } catch (e) {
-    debugPrint('Error load services: $e');
-  }
-}
 
 class _KasirHomeScreenState extends State<KasirHomeScreen> {
   int _currentIndex = 0;
   int _orderFilterIndex = 0;
   int _reportTabFilterIndex = 0;
 
-  // --- STATE DATA PELANGGAN ---
-  final List<Map<String, String>> _customerList = [
-    //{'name': 'Fitria Sari', 'phone': '081234567890'},
-    ];
-
-  // --- STATE DATA KERANJANG & CUSTOMER TERPILIH ---
+  final List<Map<String, String>> _customerList = [];
   Map<String, String>? _selectedCustomer;
   final List<Map<String, dynamic>> _cartItems = [];
-
-  // --- STATE PENAMPUNG TRANSAKSI HARI INI ---
   final List<Map<String, dynamic>> _ordersHariIni = [];
 
   @override
-    void initState() {
-      super.initState();
-      _loadOrdersFromPocketBase();
+  void initState() {
+    super.initState();
+    _initDataAwal();
+  }
+
+  Future<void> _initDataAwal() async {
+    try {
+      await _loadOrdersFromPocketBase();
+      await _loadCustomersFromPocketBase();
+      await _loadServicesFromPocketBase();
+    } catch (e) {
+      debugPrint('Error saat memuat data awal: $e');
+    } finally {
+      if (mounted) {
+        setState(() {});
+      }
     }
-       
-      Future<void> _loadOrdersFromPocketBase() async {
-               List<Map<String, dynamic>> serverOrders = [];
-           
-               // 1. Coba ambil data dari server
-               try {
-                 final records = await pb.collection('orders').getFullList(sort: '-created');
-                 serverOrders = records.map((record) {
-                   return {
-                     'id': record.id,
-                     'server_id': record.id,
-                     'customer': record.getStringValue('customer_name'),
-                     'total': record.getDoubleValue('total'),
-                     'status': record.getStringValue('status'),
-                     'is_synced': 1,
-                     'items': record.getListValue('items'),
-                   };
-                 }).toList();
-               } catch (e) {
-                 debugPrint('PocketBase offline/error: $e');
-               }
-           
-               // 2. Ambil data lokal SQLite
-               try {
-                 final localData = await DatabaseHelper.instance.getLocalOrders();
-           
-                 if (mounted) {
-                   for (var localItem in localData) {
-                     bool existsInServer = serverOrders.any(
-                       (s) => s['id'] == localItem['server_id'] || s['id'] == localItem['id'].toString(),
-                     );
-                     if (!existsInServer) {
-                       serverOrders.add(localItem);
-                     }
-                   }
-           
-                   setState(() {
-                     _ordersHariIni.clear();
-                     _ordersHariIni.addAll(serverOrders);
-                   });
-           
-                   await SyncService.instance.syncPendingOrders(context: context);
-                 }
-               } catch (e) {
-                 debugPrint('Error load local orders: $e');
-               }
-             }
-               
-  // Helper untuk menghitung total belanja di keranjang
-    double get _totalPrice {
-      return _cartItems.fold(0.0, (sum, item) => sum + (item['total'] as double));
-    } // <-- Tutup _totalPrice tepat di sini di bawah return-nya!
+  }
+
+  Future<void> _loadCustomersFromPocketBase() async {
+    try {
+      final records = await pb.collection('customers').getFullList(sort: '-created');
+      _customerList.clear();
+      _customerList.addAll(records.map((record) {
+        return {
+          'id': record.id,
+          'name': record.data['name']?.toString() ?? 'Tanpa Nama',
+          'phone': record.data['phone']?.toString() ?? '-',
+        };
+      }).toList());
+    } catch (e) {
+      debugPrint('Error load customers: $e');
+    }
+  }
+
+  Future<void> _loadServicesFromPocketBase() async {
+    try {
+      final records = await pb.collection('services').getFullList(sort: 'name');
+      _serviceList = records.map((record) {
+        return {
+          'id': record.id,
+          'name': record.data['name']?.toString() ?? 'Layanan',
+          'price': (record.data['price'] as num?)?.toDouble() ?? 0.0,
+          'unit': record.data['unit']?.toString() ?? 'Kg',
+          'est': record.data['estimasi']?.toString() ?? '1 Hari',
+          'category': record.data['category']?.toString() ?? 'UMUM',
+        };
+      }).toList();
+    } catch (e) {
+      debugPrint('Error load services: $e');
+    }
+  }
+
+  Future<void> _loadOrdersFromPocketBase() async {
+      try {
+        final records = await pb.collection('orders').getFullList(sort: '-created');
+        final serverOrders = records.map((record) {
+          return {
+            'id': record.id,
+            'server_id': record.id,
+            'customer': record.data['customer_name']?.toString() ?? 'Umum',
+            'total': (record.data['total'] as num?)?.toDouble() ?? 0.0,
+            'status': record.data['status']?.toString() ?? 'Proses',
+            'is_synced': 1,
+            'items': record.data['items'] ?? [],
+          };
+        }).toList();
   
-    // Helper untuk menghitung total omset transaksi masuk
-    double get _totalOmsetHariIni {
-      return _ordersHariIni.fold(
-        0.0,
-        (sum, item) => sum + (item['total'] as double),
-      );
+        final localData = await DatabaseHelper.instance.getLocalOrders();
+        if (mounted) {
+          for (var localItem in localData) {
+            bool existsInServer = serverOrders.any(
+              (s) => s['id'] == localItem['server_id'] || s['id'] == localItem['id'].toString(),
+            );
+            if (!existsInServer) {
+              serverOrders.add(localItem);
+            }
+          }
+          setState(() {
+            _ordersHariIni.clear();
+            _ordersHariIni.addAll(serverOrders);
+          });
+        }
+        await SyncService.instance.syncPendingOrders(context: context);
+      } catch (e) {
+        debugPrint('Error load local orders: $e');
+      }
     }
 
-  // --- DIALOG 1: PILIH ACTION TRANSAKSI ---
+  double get _totalPrice {
+    return _cartItems.fold(0.0, (sum, item) => sum + (item['total'] as double));
+  }
+
+  double get _totalOmsetHariIni {
+    return _ordersHariIni.fold(0.0, (sum, item) => sum + (item['total'] as double));
+  }
+
+// Class Method / Member Function
+// Fungsi Internal _kasirhomestate
+//fungsi ini digunakan untuk menjalankan aksi tertentu di dalam kelas _kasirhomestate, seperti menjalankan dialog UI
+
   void _showActionDialog() {
     showDialog(
       context: context,
@@ -160,7 +171,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                   children: [
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
+                      children: const [
                         Text(
                           'Aksi Cepat Transaksi',
                           style: TextStyle(
@@ -173,18 +184,12 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                         SizedBox(height: 2),
                         Text(
                           'Pilih menu transaksi yang ingin diproses',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: Color(0xFF64748B),
-                          ),
+                          style: TextStyle(fontSize: 10, color: Color(0xFF64748B)),
                         ),
                       ],
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
                         color: const Color(0xFFEFF6FF),
                         borderRadius: BorderRadius.circular(6),
@@ -238,8 +243,8 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                       icon: Icons.card_giftcard_rounded,
                       accentColor: const Color(0xFFF59E0B),
                       title: 'Reward Pelanggan',
-                      onTap: () => Navigator.pop(context),
                       subtitle: 'Klaim poin / voucher',
+                      onTap: () => Navigator.pop(context),
                     ),
                   ],
                 ),
@@ -270,10 +275,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: accentColor.withOpacity(0.18),
-              width: 1.2,
-            ),
+            border: Border.all(color: accentColor.withOpacity(0.18), width: 1.2),
             boxShadow: [
               BoxShadow(
                 color: accentColor.withOpacity(0.04),
@@ -317,573 +319,372 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
     );
   }
 
-  // Helper fungsi untuk format rupiah accounting (contoh: 62400 -> "Rp 62.400")
-      String _formatRupiah(num amount) {
-        String str = amount.toInt().toString();
-        RegExp reg = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
-        String formatted = str.replaceAllMapped(reg, (Match m) => '${m[1]}.');
-        return 'Rp $formatted';
-      }
-    
-      // --- DIALOG 2: FORM BUAT ORDER TRANSAKSI (QTY CENTER & FORMAT RUPIAH) ---
-      void _showBuatOrderDialog() {
-        String selectedParfum = 'Standard / Original';
-        double diskonPersen = 0.0;
-    
-        showDialog(
-          context: context,
-          builder: (BuildContext context) {
-            return StatefulBuilder(
-              builder: (context, setModalState) {
-                final double totalSetelahDiskon =
-                    _totalPrice - (_totalPrice * (diskonPersen / 100));
-    
-                return Dialog(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(16),
-                  ),
-                  child: Container(
-                    width: 400,
-                    constraints: const BoxConstraints(maxHeight: 560),
-                    padding: const EdgeInsets.all(16),
-                    child: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.start,
+  String _formatRupiah(num amount) {
+    String str = amount.toInt().toString();
+    RegExp reg = RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))');
+    String formatted = str.replaceAllMapped(reg, (Match m) => '${m[1]}.');
+    return 'Rp $formatted';
+  }
+
+  void _showBuatOrderDialog() {
+    String selectedParfum = 'Standard / Original';
+    double diskonPersen = 0.0;
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            final double totalSetelahDiskon =
+                _totalPrice - (_totalPrice * (diskonPersen / 100));
+
+            return Dialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              child: Container(
+                width: 400,
+                constraints: const BoxConstraints(maxHeight: 560),
+                padding: const EdgeInsets.all(16),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                'Buat Order Transaksi',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              IconButton(
-                                icon: const Icon(Icons.close, size: 18),
-                                onPressed: () => Navigator.pop(context),
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-    
-                          // PILIH CUSTOMER
-                          Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[50],
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      const Text(
-                                        'Pelanggan',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: Colors.grey,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        _selectedCustomer != null
-                                            ? '${_selectedCustomer!['name']} (${_selectedCustomer!['phone']})'
-                                            : 'Silahkan Pilih Customer Terlebih Dahulu.',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: _selectedCustomer != null
-                                              ? FontWeight.bold
-                                              : FontWeight.normal,
-                                          fontStyle: _selectedCustomer == null
-                                              ? FontStyle.italic
-                                              : FontStyle.normal,
-                                          color: _selectedCustomer != null
-                                              ? Colors.black
-                                              : Colors.grey,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF2563EB),
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 6,
-                                    ),
-                                    minimumSize: Size.zero,
-                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                  ),
-                                  onPressed: () async {
-                                    await _showPilihCustomerDialog();
-                                    setModalState(() {});
-                                  },
-                                  child: const Text(
-                                    'CARI',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-    
-                          // KERANJANG LAYANAN
-                          Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[50],
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Column(
-                              children: [
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    const Text(
-                                      'Daftar Layanan (Keranjang)',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
-                                    TextButton(
-                                      onPressed: () async {
-                                        await _showPilihLayananDialog();
-                                        setModalState(() {});
-                                      },
-                                      style: TextButton.styleFrom(
-                                        backgroundColor: Colors.cyan[50],
-                                        foregroundColor: Colors.cyan[800],
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 4,
-                                        ),
-                                        minimumSize: Size.zero,
-                                        tapTargetSize:
-                                            MaterialTapTargetSize.shrinkWrap,
-                                      ),
-                                      child: const Text(
-                                        '+ Tambah Layanan',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 12),
-                                _cartItems.isEmpty
-                                    ? const Center(
-                                        child: Padding(
-                                          padding: EdgeInsets.symmetric(
-                                            vertical: 8,
-                                          ),
-                                          child: Text(
-                                            'Belum ada layanan yang ditambahkan.',
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              color: Colors.grey,
-                                              fontStyle: FontStyle.italic,
-                                            ),
-                                          ),
-                                        ),
-                                      )
-                                    : ListView.builder(
-                                        shrinkWrap: true,
-                                        physics: const NeverScrollableScrollPhysics(),
-                                        itemCount: _cartItems.length,
-                                        itemBuilder: (context, index) {
-                                          final cart = _cartItems[index];
-                                          return Container(
-                                            margin: const EdgeInsets.only(bottom: 8),
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 10, vertical: 8),
-                                            decoration: BoxDecoration(
-                                              color: Colors.white,
-                                              borderRadius: BorderRadius.circular(8),
-                                              border: Border.all(color: Colors.grey[200]!),
-                                            ),
-                                            child: Row(
-                                              children: [
-                                                Expanded(
-                                                  child: Column(
-                                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                                    children: [
-                                                      Text(
-                                                        cart['nama'],
-                                                        style: const TextStyle(
-                                                          fontSize: 11,
-                                                          fontWeight: FontWeight.bold,
-                                                        ),
-                                                      ),
-                                                      const SizedBox(height: 2),
-                                                      Text(
-                                                        '${_formatRupiah(cart['harga'])} / Kg',
-                                                        style: const TextStyle(
-                                                          fontSize: 9,
-                                                          color: Colors.grey,
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-    
-                                                // KONTROL QTY CENTER & TIDAK MIRING
-                                                Container(
-                                                  height: 28,
-                                                  decoration: BoxDecoration(
-                                                    border: Border.all(color: Colors.grey[300]!),
-                                                    borderRadius: BorderRadius.circular(20),
-                                                  ),
-                                                  child: Row(
-                                                    mainAxisSize: MainAxisSize.min,
-                                                    crossAxisAlignment: CrossAxisAlignment.center,
-                                                    children: [
-                                                      InkWell(
-                                                        onTap: () {
-                                                          setModalState(() {
-                                                            double current = (cart['jumlah'] as num).toDouble();
-                                                            if (current > 0.5) {
-                                                              cart['jumlah'] = current - 0.5;
-                                                              cart['total'] = (cart['harga'] as double) * cart['jumlah'];
-                                                            }
-                                                          });
-                                                          setState(() {});
-                                                        },
-                                                        child: const Padding(
-                                                          padding: EdgeInsets.symmetric(horizontal: 10),
-                                                          child: Text(
-                                                            '-',
-                                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                                                          ),
-                                                        ),
-                                                      ),
-                                                      SizedBox(
-                                                        width: 44,
-                                                        height: 28,
-                                                        child: TextFormField(
-                                                          initialValue: cart['jumlah'].toString().replaceAll(RegExp(r'\.0$'), ''),
-                                                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                                          textAlign: TextAlign.center,
-                                                          textAlignVertical: TextAlignVertical.center,
-                                                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                                                          decoration: const InputDecoration(
-                                                            isDense: true,
-                                                            contentPadding: EdgeInsets.zero,
-                                                            border: InputBorder.none,
-                                                          ),
-                                                          onChanged: (val) {
-                                                            double? parsed = double.tryParse(val.replaceAll(',', '.'));
-                                                            if (parsed != null && parsed > 0) {
-                                                              setModalState(() {
-                                                                cart['jumlah'] = parsed;
-                                                                cart['total'] = (cart['harga'] as double) * cart['jumlah'];
-                                                              });
-                                                              setState(() {});
-                                                            }
-                                                          },
-                                                        ),
-                                                      ),
-                                                      InkWell(
-                                                        onTap: () {
-                                                          setModalState(() {
-                                                            double current = (cart['jumlah'] as num).toDouble();
-                                                            cart['jumlah'] = current + 0.5;
-                                                            cart['total'] = (cart['harga'] as double) * cart['jumlah'];
-                                                          });
-                                                          setState(() {});
-                                                        },
-                                                        child: const Padding(
-                                                          padding: EdgeInsets.symmetric(horizontal: 10),
-                                                          child: Text(
-                                                            '+',
-                                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                                                          ),
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 8),
-    
-                                                // TOTAL HARGA ITEM FORMAT AKUNTANSI
-                                                Text(
-                                                  _formatRupiah(cart['total']),
-                                                  style: const TextStyle(
-                                                    fontSize: 10,
-                                                    fontWeight: FontWeight.bold,
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 4),
-                                                IconButton(
-                                                  icon: const Icon(Icons.close, size: 14, color: Colors.grey),
-                                                  padding: EdgeInsets.zero,
-                                                  constraints: const BoxConstraints(),
-                                                  onPressed: () {
-                                                    setModalState(() {
-                                                      _cartItems.removeAt(index);
-                                                    });
-                                                    setState(() {});
-                                                  },
-                                                ),
-                                              ],
-                                            ),
-                                          );
-                                        },
-                                      ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-    
-                          // AROMA PARFUM
                           const Text(
-                            'Aroma Parfum',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey,
-                            ),
+                            'Buat Order Transaksi',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                           ),
-                          const SizedBox(height: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey[300]!),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<String>(
-                                value: selectedParfum,
-                                isExpanded: true,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.black,
-                                ),
-                                items:
-                                    <String>[
-                                      'Standard / Original',
-                                      'Lily',
-                                      'Akasia',
-                                      'Ocean Fresh',
-                                    ].map((String value) {
-                                      return DropdownMenuItem<String>(
-                                        value: value,
-                                        child: Text(value),
-                                      );
-                                    }).toList(),
-                                onChanged: (newValue) {
-                                  setModalState(() {
-                                    selectedParfum = newValue!;
-                                  });
-                                },
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-    
-                          // CATATAN ORDER
-                          const Text(
-                            'Catatan Order',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          TextField(
-                            maxLines: 2,
-                            style: const TextStyle(fontSize: 11),
-                            decoration: InputDecoration(
-                              hintText:
-                                  'Contoh: Luntur, Jangan Terlalu Panas, Baju warna putih dipisah',
-                              hintStyle: const TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey,
-                              ),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: BorderSide(color: Colors.grey[300]!),
-                              ),
-                              contentPadding: const EdgeInsets.all(8),
-                            ),
-                          ),
-                          const SizedBox(height: 10),
-    
-                          // PANEL DISKON
-                          const Text(
-                            'Diskon / Potongan Harga',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 12),
-                            decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey[300]!),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: DropdownButtonHideUnderline(
-                              child: DropdownButton<double>(
-                                value: diskonPersen,
-                                isExpanded: true,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Colors.black,
-                                ),
-                                items: const [
-                                  DropdownMenuItem(
-                                    value: 0.0,
-                                    child: Text('Tanpa Diskon (0%)'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 5.0,
-                                    child: Text('Diskon 5%'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 10.0,
-                                    child: Text('Diskon 10%'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 15.0,
-                                    child: Text('Diskon 15%'),
-                                  ),
-                                  DropdownMenuItem(
-                                    value: 20.0,
-                                    child: Text('Diskon 20%'),
-                                  ),
-                                ],
-                                onChanged: (newValue) {
-                                  setModalState(() {
-                                    diskonPersen = newValue!;
-                                  });
-                                },
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-    
-                          // BOTTOM BUTTON & TOTAL PRICE FORMAT AKUNTANSI
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'TOTAL PRICE',
-                                    style: TextStyle(
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
-                                  if (diskonPersen > 0)
-                                    Text(
-                                      _formatRupiah(_totalPrice),
-                                      style: const TextStyle(
-                                        fontSize: 9,
-                                        color: Colors.red,
-                                        decoration: TextDecoration.lineThrough,
-                                      ),
-                                    ),
-                                  Text(
-                                    _formatRupiah(totalSetelahDiskon),
-                                    style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.redAccent,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 20,
-                                    vertical: 10,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                                onPressed: _cartItems.isEmpty || _selectedCustomer == null
-                                    ? null
-                                    : () async {
-                                        try {
-                                          final newOrder = {
-                                            'customer_name': _selectedCustomer!['name'],
-                                            'total': totalSetelahDiskon,
-                                            'status': 'Antrian',
-                                            'payment_method': 'Cash',
-                                            'items': _cartItems,
-                                          };
-                                    
-                                          await DatabaseHelper.instance.insertOrder(newOrder);
-                                    
-                                          setState(() {
-                                            _cartItems.clear();
-                                            _selectedCustomer = null;
-                                          });
-                                    
-                                          _loadOrdersFromPocketBase();
-                                    
-                                          if (mounted) {
-                                            ScaffoldMessenger.of(context).showSnackBar(
-                                              const SnackBar(
-                                                content: Text('Transaksi Berhasil Dibuat & Tersimpan Offline!'),
-                                              ),
-                                            );
-                                            Navigator.pop(context);
-                                          }
-                                    
-                                          SyncService.instance.syncPendingOrders();
-                                        } catch (e) {
-                                          debugPrint('Error simpan order ke SQLite: $e');
-                                        }
-                                      },
-                                child: const Text(
-                                  'PESAN',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 18),
+                            onPressed: () => Navigator.pop(context),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
                           ),
                         ],
                       ),
-                    ),
+                      const SizedBox(height: 12),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[50],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text('Pelanggan', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    _selectedCustomer != null
+                                        ? '${_selectedCustomer!['name']} (${_selectedCustomer!['phone']})'
+                                        : 'Silahkan Pilih Customer Terlebih Dahulu.',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: _selectedCustomer != null ? FontWeight.bold : FontWeight.normal,
+                                      fontStyle: _selectedCustomer == null ? FontStyle.italic : FontStyle.normal,
+                                      color: _selectedCustomer != null ? Colors.black : Colors.grey,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            ElevatedButton(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF2563EB),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              onPressed: () async {
+                                await _showPilihCustomerDialog();
+                                setModalState(() {});
+                              },
+                              child: const Text('CARI', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[50],
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Column(
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('Daftar Layanan (Keranjang)', style: TextStyle(fontSize: 10, color: Colors.grey)),
+                                TextButton(
+                                  onPressed: () async {
+                                    await _showPilihLayananDialog();
+                                    setModalState(() {});
+                                  },
+                                  style: TextButton.styleFrom(
+                                    backgroundColor: Colors.cyan[50],
+                                    foregroundColor: Colors.cyan[800],
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  child: const Text('+ Tambah Layanan', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            _cartItems.isEmpty
+                                ? const Center(
+                                    child: Padding(
+                                      padding: EdgeInsets.symmetric(vertical: 8),
+                                      child: Text('Belum ada layanan yang ditambahkan.', style: TextStyle(fontSize: 10, color: Colors.grey, fontStyle: FontStyle.italic)),
+                                    ),
+                                  )
+                                : ListView.builder(
+                                    shrinkWrap: true,
+                                    physics: const NeverScrollableScrollPhysics(),
+                                    itemCount: _cartItems.length,
+                                    itemBuilder: (context, index) {
+                                      final cart = _cartItems[index];
+                                      return Container(
+                                        margin: const EdgeInsets.only(bottom: 8),
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(color: Colors.grey[200]!),
+                                        ),
+                                        child: Row(
+                                          children: [
+                                            Expanded(
+                                              child: Column(
+                                                crossAxisAlignment: CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(cart['nama'], style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                                  const SizedBox(height: 2),
+                                                  Text('${_formatRupiah(cart['harga'])} / Kg', style: const TextStyle(fontSize: 9, color: Colors.grey)),
+                                                ],
+                                              ),
+                                            ),
+                                            Container(
+                                              height: 28,
+                                              decoration: BoxDecoration(
+                                                border: Border.all(color: Colors.grey[300]!),
+                                                borderRadius: BorderRadius.circular(20),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                crossAxisAlignment: CrossAxisAlignment.center,
+                                                children: [
+                                                  InkWell(
+                                                    onTap: () {
+                                                      setModalState(() {
+                                                        double current = (cart['jumlah'] as num).toDouble();
+                                                        if (current > 0.5) {
+                                                          cart['jumlah'] = current - 0.5;
+                                                          cart['total'] = (cart['harga'] as double) * cart['jumlah'];
+                                                        }
+                                                      });
+                                                      setState(() {});
+                                                    },
+                                                    child: const Padding(
+                                                      padding: EdgeInsets.symmetric(horizontal: 10),
+                                                      child: Text('-', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                                    ),
+                                                  ),
+                                                  SizedBox(
+                                                    width: 44,
+                                                    height: 28,
+                                                    child: TextFormField(
+                                                      initialValue: cart['jumlah'].toString().replaceAll(RegExp(r'\.0$'), ''),
+                                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                                      textAlign: TextAlign.center,
+                                                      textAlignVertical: TextAlignVertical.center,
+                                                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                                                      decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.zero, border: InputBorder.none),
+                                                      onChanged: (val) {
+                                                        double? parsed = double.tryParse(val.replaceAll(',', '.'));
+                                                        if (parsed != null && parsed > 0) {
+                                                          setModalState(() {
+                                                            cart['jumlah'] = parsed;
+                                                            cart['total'] = (cart['harga'] as double) * cart['jumlah'];
+                                                          });
+                                                          setState(() {});
+                                                        }
+                                                      },
+                                                    ),
+                                                  ),
+                                                  InkWell(
+                                                    onTap: () {
+                                                      setModalState(() {
+                                                        double current = (cart['jumlah'] as num).toDouble();
+                                                        cart['jumlah'] = current + 0.5;
+                                                        cart['total'] = (cart['harga'] as double) * cart['jumlah'];
+                                                      });
+                                                      setState(() {});
+                                                    },
+                                                    child: const Padding(
+                                                      padding: EdgeInsets.symmetric(horizontal: 10),
+                                                      child: Text('+', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(_formatRupiah(cart['total']), style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                                            const SizedBox(width: 4),
+                                            IconButton(
+                                              icon: const Icon(Icons.close, size: 14, color: Colors.grey),
+                                              padding: EdgeInsets.zero,
+                                              constraints: const BoxConstraints(),
+                                              onPressed: () {
+                                                setModalState(() {
+                                                  _cartItems.removeAt(index);
+                                                });
+                                                setState(() {});
+                                              },
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                    },
+                                  ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text('Aroma Parfum', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(border: Border.all(color: Colors.grey[300]!), borderRadius: BorderRadius.circular(8)),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<String>(
+                            value: selectedParfum,
+                            isExpanded: true,
+                            style: const TextStyle(fontSize: 11, color: Colors.black),
+                            items: <String>['Standard / Original', 'Lily', 'Akasia', 'Ocean Fresh'].map((String value) {
+                              return DropdownMenuItem<String>(value: value, child: Text(value));
+                            }).toList(),
+                            onChanged: (newValue) {
+                              setModalState(() {
+                                selectedParfum = newValue!;
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text('Catatan Order', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
+                      const SizedBox(height: 4),
+                      TextField(
+                        maxLines: 2,
+                        style: const TextStyle(fontSize: 11),
+                        decoration: InputDecoration(
+                          hintText: 'Contoh: Luntur, Jangan Terlalu Panas, Baju warna putih dipisah',
+                          hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey[300]!)),
+                          contentPadding: const EdgeInsets.all(8),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Text('Diskon / Potongan Harga', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
+                      const SizedBox(height: 4),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        decoration: BoxDecoration(border: Border.all(color: Colors.grey[300]!), borderRadius: BorderRadius.circular(8)),
+                        child: DropdownButtonHideUnderline(
+                          child: DropdownButton<double>(
+                            value: diskonPersen,
+                            isExpanded: true,
+                            style: const TextStyle(fontSize: 11, color: Colors.black),
+                            items: const [
+                              DropdownMenuItem(value: 0.0, child: Text('Tanpa Diskon (0%)')),
+                              DropdownMenuItem(value: 5.0, child: Text('Diskon 5%')),
+                              DropdownMenuItem(value: 10.0, child: Text('Diskon 10%')),
+                              DropdownMenuItem(value: 15.0, child: Text('Diskon 15%')),
+                              DropdownMenuItem(value: 20.0, child: Text('Diskon 20%')),
+                            ],
+                            onChanged: (newValue) {
+                              setModalState(() {
+                                diskonPersen = newValue!;
+                              });
+                            },
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('TOTAL PRICE', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.grey)),
+                              if (diskonPersen > 0)
+                                Text(_formatRupiah(_totalPrice), style: const TextStyle(fontSize: 9, color: Colors.red, decoration: TextDecoration.lineThrough)),
+                              Text(_formatRupiah(totalSetelahDiskon), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                          ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.redAccent,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                            onPressed: _cartItems.isEmpty || _selectedCustomer == null
+                                ? null
+                                : () async {
+                                    try {
+                                      final newOrder = {
+                                        'customer_name': _selectedCustomer!['name'],
+                                        'total': totalSetelahDiskon,
+                                        'status': 'Antrian',
+                                        'payment_method': 'Cash',
+                                        'items': _cartItems,
+                                      };
+                                      await DatabaseHelper.instance.insertOrder(newOrder);
+                                      setState(() {
+                                        _cartItems.clear();
+                                        _selectedCustomer = null;
+                                      });
+                                      _loadOrdersFromPocketBase();
+                                      if (mounted) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(content: Text('Transaksi Berhasil Dibuat & Tersimpan Offline!')),
+                                        );
+                                        Navigator.pop(context);
+                                      }
+                                      SyncService.instance.syncPendingOrders();
+                                    } catch (e) {
+                                      debugPrint('Error simpan order ke SQLite: $e');
+                                    }
+                                  },
+                            child: const Text('PESAN', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                );
-              },
+                ),
+              ),
             );
           },
         );
-      }
+      },
+    );
+  }
 
-  // --- DIALOG 3: PILIH CUSTOMER ---
   Future<void> _showPilihCustomerDialog() async {
     bool isAddingNewCustomer = false;
     final TextEditingController nameController = TextEditingController();
@@ -903,9 +704,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
             }).toList();
 
             return Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               child: Container(
                 width: 340,
                 constraints: const BoxConstraints(maxHeight: 520),
@@ -918,13 +717,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text(
-                            'Pilih Customer',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                          ),
+                          const Text('Pilih Customer', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                           IconButton(
                             icon: const Icon(Icons.close, size: 16),
                             onPressed: () => Navigator.pop(context),
@@ -934,84 +727,42 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                         ],
                       ),
                       const SizedBox(height: 10),
-
                       TextField(
                         style: const TextStyle(fontSize: 11),
-                        onChanged: (val) {
-                          setCustomerModalState(() {
-                            searchQuery = val;
-                          });
-                        },
+                        onChanged: (val) => setCustomerModalState(() => searchQuery = val),
                         decoration: InputDecoration(
                           hintText: 'Masukkan Nama atau No Hp',
-                          hintStyle: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 8,
-                          ),
+                          hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                           suffixIcon: const Icon(Icons.search, size: 16),
                         ),
                       ),
                       const SizedBox(height: 12),
-
                       if (filteredList.isEmpty)
                         const Center(
                           child: Padding(
                             padding: EdgeInsets.symmetric(vertical: 12),
-                            child: Text(
-                              'Pelanggan tidak ditemukan.',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey,
-                              ),
-                            ),
+                            child: Text('Pelanggan tidak ditemukan.', style: TextStyle(fontSize: 10, color: Colors.grey)),
                           ),
                         )
                       else
                         Container(
                           constraints: const BoxConstraints(maxHeight: 140),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey[200]!),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
+                          decoration: BoxDecoration(border: Border.all(color: Colors.grey[200]!), borderRadius: BorderRadius.circular(8)),
                           child: ListView.separated(
                             shrinkWrap: true,
                             itemCount: filteredList.length,
-                            separatorBuilder: (ctx, i) =>
-                                const Divider(height: 1),
+                            separatorBuilder: (ctx, i) => const Divider(height: 1),
                             itemBuilder: (ctx, index) {
                               final cust = filteredList[index];
                               return ListTile(
                                 dense: true,
-                                title: Text(
-                                  cust['name']!,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  cust['phone']!,
-                                  style: const TextStyle(
-                                    fontSize: 9,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                                trailing: const Icon(
-                                  Icons.chevron_right,
-                                  size: 14,
-                                  color: Colors.blue,
-                                ),
+                                title: Text(cust['name']!, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                subtitle: Text(cust['phone']!, style: const TextStyle(fontSize: 9, color: Colors.grey)),
+                                trailing: const Icon(Icons.chevron_right, size: 14, color: Colors.blue),
                                 onTap: () {
-                                  setState(() {
-                                    _selectedCustomer = cust;
-                                  });
+                                  setState(() => _selectedCustomer = cust);
                                   Navigator.pop(context);
                                 },
                               );
@@ -1019,37 +770,22 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                           ),
                         ),
                       const SizedBox(height: 12),
-
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: isAddingNewCustomer
-                                ? Colors.grey[600]
-                                : Colors.redAccent,
+                            backgroundColor: isAddingNewCustomer ? Colors.grey[600] : Colors.redAccent,
                             foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             padding: const EdgeInsets.symmetric(vertical: 10),
                           ),
-                          onPressed: () {
-                            setCustomerModalState(() {
-                              isAddingNewCustomer = !isAddingNewCustomer;
-                            });
-                          },
+                          onPressed: () => setCustomerModalState(() => isAddingNewCustomer = !isAddingNewCustomer),
                           child: Text(
-                            isAddingNewCustomer
-                                ? 'BATAL TAMBAH'
-                                : 'TAMBAH CUSTOMER BARU',
-                            style: const TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                            ),
+                            isAddingNewCustomer ? 'BATAL TAMBAH' : 'TAMBAH CUSTOMER BARU',
+                            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
                           ),
                         ),
                       ),
-
                       if (isAddingNewCustomer) ...[
                         const SizedBox(height: 12),
                         Container(
@@ -1067,20 +803,11 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                                 style: const TextStyle(fontSize: 11),
                                 decoration: InputDecoration(
                                   hintText: 'Nama Pelanggan Baru',
-                                  hintStyle: const TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.grey,
-                                  ),
+                                  hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
                                   fillColor: Colors.white,
                                   filled: true,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 8,
-                                  ),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                                 ),
                               ),
                               const SizedBox(height: 8),
@@ -1090,20 +817,11 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                                 keyboardType: TextInputType.phone,
                                 decoration: InputDecoration(
                                   hintText: 'No HP / WhatsApp',
-                                  hintStyle: const TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.grey,
-                                  ),
+                                  hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
                                   fillColor: Colors.white,
                                   filled: true,
-                                  border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    borderSide: BorderSide.none,
-                                  ),
-                                  contentPadding: const EdgeInsets.symmetric(
-                                    horizontal: 10,
-                                    vertical: 8,
-                                  ),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide.none),
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                                 ),
                               ),
                               const SizedBox(height: 10),
@@ -1113,35 +831,44 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: const Color(0xFF2563EB),
                                     foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 10,
-                                    ),
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                    padding: const EdgeInsets.symmetric(vertical: 10),
                                   ),
-                                  onPressed: () {
+                                  onPressed: () async {
                                     if (nameController.text.isNotEmpty) {
-                                      final newCust = {
-                                        'name': nameController.text,
-                                        'phone': phoneController.text.isEmpty
-                                            ? '-'
-                                            : phoneController.text,
-                                      };
-                                      setState(() {
-                                        _customerList.insert(0, newCust);
-                                        _selectedCustomer = newCust;
-                                      });
-                                      Navigator.pop(context);
+                                      try {
+                                        final body = {
+                                          'name': nameController.text,
+                                          'phone': phoneController.text.isEmpty ? '-' : phoneController.text,
+                                        };
+                                  
+                                        // 1. Simpan langsung ke PocketBase
+                                        final record = await pb.collection('customers').create(body: body);
+                                  
+                                        final newCust = {
+                                          'id': record.id,
+                                          'name': record.getStringValue('name'),
+                                          'phone': record.getStringValue('phone'),
+                                        };
+                                  
+                                        // 2. Update state lokal
+                                        setState(() {
+                                          _customerList.insert(0, newCust);
+                                          _selectedCustomer = newCust;
+                                        });
+                                  
+                                        if (context.mounted) {
+                                          Navigator.pop(context);
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(content: Text('Customer Berhasil Ditambahkan ke Server!')),
+                                          );
+                                        }
+                                      } catch (e) {
+                                        debugPrint('Gagal simpan customer ke PocketBase: $e');
+                                      }
                                     }
                                   },
-                                  child: const Text(
-                                    'Simpan Customer',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
+                                  child: const Text('Simpan Customer', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                                 ),
                               ),
                             ],
@@ -1159,15 +886,12 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
     );
   }
 
-  // --- DIALOG 4: PILIH LAYANAN ---
   Future<void> _showPilihLayananDialog() async {
     await showDialog(
       context: context,
       builder: (context) {
         return Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           child: Container(
             width: 360,
             constraints: const BoxConstraints(maxHeight: 520),
@@ -1179,20 +903,10 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'Pilih Layanan',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
+                    const Text('Pilih Layanan', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                     Row(
                       children: [
-                        const Icon(
-                          Icons.settings,
-                          size: 16,
-                          color: Colors.grey,
-                        ),
+                        const Icon(Icons.settings, size: 16, color: Colors.grey),
                         const SizedBox(width: 8),
                         IconButton(
                           icon: const Icon(Icons.close, size: 16),
@@ -1205,83 +919,38 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                   ],
                 ),
                 const SizedBox(height: 10),
-
                 TextField(
                   style: const TextStyle(fontSize: 11),
                   decoration: InputDecoration(
                     hintText: 'Cari Layanan V2',
-                    hintStyle: const TextStyle(
-                      fontSize: 10,
-                      color: Colors.grey,
-                    ),
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
+                    hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                   ),
                 ),
                 const SizedBox(height: 12),
-
                 Expanded(
                   child: ListView(
                     physics: const BouncingScrollPhysics(),
                     children: [
                       _buildCategoryGroup('LAYANAN KILOAN (3)', [
-                        {
-                          'name': 'setrika',
-                          'price': 'Rp 4.000 / Kg',
-                          'est': 'Est: 6 Hari',
-                        },
-                        {
-                          'name': 'cuci lipat',
-                          'price': 'Rp 6.000 / Kg',
-                          'est': 'Est: 4 Hari',
-                        },
-                        {
-                          'name': 'cuci kering',
-                          'price': 'Rp 10.000 / Kg',
-                          'est': 'Est: 4 Hari',
-                        },
+                        {'name': 'setrika', 'price': 'Rp 4.000 / Kg', 'est': 'Est: 6 Hari'},
+                        {'name': 'cuci lipat', 'price': 'Rp 6.000 / Kg', 'est': 'Est: 4 Hari'},
+                        {'name': 'cuci kering', 'price': 'Rp 10.000 / Kg', 'est': 'Est: 4 Hari'},
                       ]),
                       const SizedBox(height: 10),
-
                       _buildCategoryGroup('LAYANAN SATUAN (2)', [
-                        {
-                          'name': 'Cuci Sepatu Premium',
-                          'price': 'Rp 25.000 / Pasang',
-                          'est': 'Est: 2 Hari',
-                        },
-                        {
-                          'name': 'Cuci Jaket Kulit',
-                          'price': 'Rp 35.000 / Pcs',
-                          'est': 'Est: 3 Hari',
-                        },
+                        {'name': 'Cuci Sepatu Premium', 'price': 'Rp 25.000 / Pasang', 'est': 'Est: 2 Hari'},
+                        {'name': 'Cuci Jaket Kulit', 'price': 'Rp 35.000 / Pcs', 'est': 'Est: 3 Hari'},
                       ]),
                       const SizedBox(height: 10),
-
                       _buildCategoryGroup('LAYANAN PCS (2)', [
-                        {
-                          'name': 'Cuci Bedcover Large',
-                          'price': 'Rp 30.000 / Pcs',
-                          'est': 'Est: 1 Hari',
-                        },
-                        {
-                          'name': 'Cuci Selimut',
-                          'price': 'Rp 15.000 / Pcs',
-                          'est': 'Est: 1 Hari',
-                        },
+                        {'name': 'Cuci Bedcover Large', 'price': 'Rp 30.000 / Pcs', 'est': 'Est: 1 Hari'},
+                        {'name': 'Cuci Selimut', 'price': 'Rp 15.000 / Pcs', 'est': 'Est: 1 Hari'},
                       ]),
                       const SizedBox(height: 10),
-
                       _buildCategoryGroup('LAYANAN METER (1)', [
-                        {
-                          'name': 'Cuci Karpet Tebal',
-                          'price': 'Rp 15.000 / Meter',
-                          'est': 'Est: 3 Hari',
-                        },
+                        {'name': 'Cuci Karpet Tebal', 'price': 'Rp 15.000 / Meter', 'est': 'Est: 3 Hari'},
                       ]),
                     ],
                   ),
@@ -1307,20 +976,9 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
         children: [
           Row(
             children: [
-              const Icon(
-                Icons.inventory_2_outlined,
-                size: 14,
-                color: Colors.amber,
-              ),
+              const Icon(Icons.inventory_2_outlined, size: 14, color: Colors.amber),
               const SizedBox(width: 6),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.black87,
-                ),
-              ),
+              Text(title, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black87)),
             ],
           ),
           const SizedBox(height: 8),
@@ -1340,44 +998,22 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          item['name']!,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                        Text(item['name']!, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 2),
-                        Text(
-                          '${item['price']} • ${item['est']}',
-                          style: const TextStyle(
-                            fontSize: 9,
-                            color: Colors.grey,
-                          ),
-                        ),
+                        Text('${item['price']} • ${item['est']}', style: const TextStyle(fontSize: 9, color: Colors.grey)),
                       ],
                     ),
                     ElevatedButton(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF2563EB),
                         foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         minimumSize: Size.zero,
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(6),
-                        ),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                       ),
                       onPressed: () {
-                        final double hargaNum =
-                            double.tryParse(
-                              item['price']!.replaceAll(RegExp(r'[^0-9]'), ''),
-                            ) ??
-                            0;
-
+                        final double hargaNum = double.tryParse(item['price']!.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
                         setState(() {
                           _cartItems.add({
                             'nama': item['name'],
@@ -1386,23 +1022,11 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                             'total': hargaNum,
                           });
                         });
-
                         ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              '${item['name']} ditambahkan ke keranjang!',
-                            ),
-                            duration: const Duration(seconds: 1),
-                          ),
+                          SnackBar(content: Text('${item['name']} ditambahkan ke keranjang!'), duration: const Duration(seconds: 1)),
                         );
                       },
-                      child: const Text(
-                        '+ Pilih',
-                        style: TextStyle(
-                          fontSize: 9,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                      child: const Text('+ Pilih', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
                     ),
                   ],
                 ),
@@ -1416,19 +1040,17 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
 
   void _showKelolaLayananDialog() {
     final TextEditingController namaController = TextEditingController();
-	final TextEditingController hargaController = TextEditingController();
-	final TextEditingController estController = TextEditingController();
-	String selectedUnit = 'Kg';
-	
+    final TextEditingController hargaController = TextEditingController();
+    final TextEditingController estController = TextEditingController();
+    String selectedUnit = 'Kg';
+
     showDialog(
       context: context,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setLayananState) {
             return Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               child: Container(
                 width: 380,
                 constraints: const BoxConstraints(maxHeight: 620),
@@ -1438,18 +1060,10 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-
-                    	//Header
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text(
-                            'Kelola Daftar Layanan',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
+                          const Text('Kelola Daftar Layanan', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                           IconButton(
                             icon: const Icon(Icons.close, size: 18),
                             onPressed: () => Navigator.pop(context),
@@ -1459,7 +1073,6 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                         ],
                       ),
                       const SizedBox(height: 12),
-                      						
                       Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
@@ -1467,615 +1080,398 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(color: Colors.grey[200]!),
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: const [
-                                Icon(
-                                  Icons.add,
-                                  size: 16,
-                                  color: Colors.black87,
-                                ),
-                                SizedBox(width: 4),
-                                Text(
-                                  'Tambah Layanan Baru',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ], // Penutup children Row
-                            ), // Penutup Row
-                          ], // Penutup children Column (BARIS INI YANG HARUS DIPASTIKAN ADA!)
-                        ), // Penutup Column
-                      ), // Penutup Container
-                          const SizedBox(height: 10),
-
-                           // INPUT NAMA LAYANAN
-                            TextField(
-                       		  controller: namaController, // <-- CUMA TAMBAH BARIS INI BRO!
-                              style: const TextStyle(fontSize: 11),
-                              decoration: InputDecoration(
-                                hintText:
-                                    'Nama Layanan (Contoh: Cuci Kiloan Express)',
-                                hintStyle: const TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.grey,
-                                ),
-                                fillColor: Colors.white,
-                                filled: true,
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: Colors.grey[300]!,
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: Colors.grey[300]!,
-                                  ),
-                                ),
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 8,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 8),
-
-                            Row(
-                              children: [
-                                Expanded(
-                                  flex: 2,
-                                  child: TextField( controller: namaController,
-                                    style: const TextStyle(fontSize: 11),
-                                    keyboardType: TextInputType.number,
-                                    decoration: InputDecoration(
-                                      hintText: 'Harga (Rp)',
-                                      hintStyle: const TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.grey,
-                                      ),
-                                      fillColor: Colors.white,
-                                      filled: true,
-                                      border: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                        borderSide: BorderSide(
-                                          color: Colors.grey[300]!,
-                                        ),
-                                      ),
-                                      enabledBorder: OutlineInputBorder(
-                                        borderRadius: BorderRadius.circular(8),
-                                        borderSide: BorderSide(
-                                          color: Colors.grey[300]!,
-                                        ),
-                                      ),
-                                      contentPadding:
-                                          const EdgeInsets.symmetric(
-                                            horizontal: 10,
-                                            vertical: 8,
-                                          ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  flex: 1,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      border: Border.all(
-                                        color: Colors.grey[300]!,
-                                      ),
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: DropdownButtonHideUnderline(
-                                      child: DropdownButton<String>(
-                                        value: selectedUnit,
-                                        isExpanded: true,
-                                        style: const TextStyle(
-                                          fontSize: 11,
-                                          color: Colors.black,
-                                        ),
-                                        items: <String>['Kg', 'Pcs', 'Meter']
-                                            .map((String value) {
-                                              return DropdownMenuItem<String>(
-                                                value: value,
-                                                child: Text(value),
-                                              );
-                                            })
-                                            .toList(),
-                                        onChanged: (newValue) {
-                                          setLayananState(() {
-                                            selectedUnit = newValue!;
-                                          });
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-
-                            TextField(
-                              style: const TextStyle(fontSize: 11),
-                              decoration: InputDecoration(
-                                hintText:
-                                    'Estimasi Selesai (Hari / misal: 1 atau 0.5)',
-                                hintStyle: const TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.grey,
-                                ),
-                                fillColor: Colors.white,
-                                filled: true,
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: Colors.grey[300]!,
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: Colors.grey[300]!,
-                                  ),
-                                ),
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 8,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            
-                            // 2. TAMBAHKAN TOMBOL SIMPAN DI SINI (Di atas "Daftar Layanan Tersedia")
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF2563EB),
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(vertical: 10),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                ),
-                                onPressed: () async {
-                                  if (namaController.text.isNotEmpty) {
-                                    try {
-                                      final body = {
-                                        'name': namaController.text,
-                                        'price': double.tryParse(hargaController.text) ?? 0,
-                                        'unit': selectedUnit,
-                                        'estimasi': '1 Hari',
-                                        'category': 'LAYANAN UMUM',
-                                      };
-                                      await pb.collection('services').create(body: body);
-                            
-                                      namaController.clear();
-                                      hargaController.clear();
-                                      await _loadServicesFromPocketBase();
-                                      setLayananState(() {});
-                            
-                                      if (context.mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(content: Text('Layanan Berhasil Ditambahkan!')),
-                                        );
-                                      }
-                                    } catch (e) {
-                                      debugPrint('Gagal simpan layanan: $e');
-                                    }
-                                  }
-                                },
-                                child: const Text(
-                                  'Simpan Layanan Baru',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ),
-
-                            const Text(
-                              'Daftar Layanan Tersedia',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-
-// 2. Diganti dengan ListView Dinamis dari PocketBase:
-  Container(
-    height: 180,
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(8),
-      border: Border.all(color: Colors.grey[300]!),
-    ),
-    child: _serviceList.isEmpty
-        ? const Center(
-            child: Text('Belum ada layanan tersimpan di server',
-                style: TextStyle(fontSize: 10, color: Colors.grey)),
-          )
-        : ListView.builder(
-            padding: const EdgeInsets.all(6),
-            itemCount: _serviceList.length,
-            itemBuilder: (context, index) {
-              final item = _serviceList[index];
-              return Container(
-                margin: const EdgeInsets.only(bottom: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF9FAFB),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: Colors.grey[200]!),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                        child: Row(
+                          children: const [
+                            Icon(Icons.add, size: 16, color: Colors.black87),
+                            SizedBox(width: 4),
+                            Text('Tambah Layanan Baru', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: namaController,
+                        style: const TextStyle(fontSize: 11),
+                        decoration: InputDecoration(
+                          hintText: 'Nama Layanan (Contoh: Cuci Kiloan Express)',
+                          hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
+                          fillColor: Colors.white,
+                          filled: true,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey[300]!)),
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey[300]!)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
                         children: [
-                          Text(
-                            item['name'] ?? '',
-                            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                          Expanded(
+                            flex: 2,
+                            child: TextField(
+                              controller: hargaController,
+                              style: const TextStyle(fontSize: 11),
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(
+                                hintText: 'Harga (Rp)',
+                                hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
+                                fillColor: Colors.white,
+                                filled: true,
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey[300]!)),
+                                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey[300]!)),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                              ),
+                            ),
                           ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '${_formatRupiah(item['price'])} / ${item['unit']} • ${item['est']}',
-                            style: const TextStyle(fontSize: 9, color: Colors.grey),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            flex: 1,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              decoration: BoxDecoration(color: Colors.white, border: Border.all(color: Colors.grey[300]!), borderRadius: BorderRadius.circular(8)),
+                              child: DropdownButtonHideUnderline(
+                                child: DropdownButton<String>(
+                                  value: selectedUnit,
+                                  isExpanded: true,
+                                  style: const TextStyle(fontSize: 11, color: Colors.black),
+                                  items: <String>['Kg', 'Pcs', 'Meter'].map((String value) {
+                                    return DropdownMenuItem<String>(value: value, child: Text(value));
+                                  }).toList(),
+                                  onChanged: (newValue) => setLayananState(() => selectedUnit = newValue!),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: estController,
+                        style: const TextStyle(fontSize: 11),
+                        decoration: InputDecoration(
+                          hintText: 'Estimasi Selesai (Hari / misal: 1 atau 0.5)',
+                          hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
+                          fillColor: Colors.white,
+                          filled: true,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey[300]!)),
+                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey[300]!)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF2563EB),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: () async {
+                            if (namaController.text.isNotEmpty) {
+                              try {
+                                final body = {
+                                  'name': namaController.text,
+                                  'price': double.tryParse(hargaController.text) ?? 0,
+                                  'unit': selectedUnit,
+                                  'estimasi': estController.text.isNotEmpty ? estController.text : '1 Hari',
+                                  'category': 'LAYANAN UMUM',
+                                };
+                                await pb.collection('services').create(body: body);
+                                namaController.clear();
+                                hargaController.clear();
+                                estController.clear();
+                                await _loadServicesFromPocketBase();
+                                setLayananState(() {});
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('Layanan Berhasil Ditambahkan!')),
+                                  );
+                                }
+                              } catch (e) {
+                                debugPrint('Gagal simpan layanan: $e');
+                              }
+                            }
+                          },
+                          child: const Text('Simpan Layanan Baru', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      const Text('Daftar Layanan Tersedia', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black87)),
+                      const SizedBox(height: 6),
+                      Container(
+                        height: 180,
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.grey[300]!),
+                        ),
+                        child: _serviceList.isEmpty
+                            ? const Center(child: Text('Belum ada layanan tersimpan di server', style: TextStyle(fontSize: 10, color: Colors.grey)))
+                            : ListView.builder(
+                                padding: const EdgeInsets.all(6),
+                                itemCount: _serviceList.length,
+                                itemBuilder: (context, index) {
+                                  final item = _serviceList[index];
+                                  return Container(
+                                    margin: const EdgeInsets.only(bottom: 6),
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFF9FAFB),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: Colors.grey[200]!),
+                                    ),
+                                    child: Row(
+                                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                      children: [
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(item['name'] ?? '', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                                              const SizedBox(height: 2),
+                                              Text('${_formatRupiah(item['price'])} / ${item['unit']} • ${item['est']}', style: const TextStyle(fontSize: 9, color: Colors.grey)),
+                                            ],
+                                          ),
+                                        ),
+                                        IconButton(
+                                          icon: const Icon(Icons.delete_outline, size: 15, color: Colors.red),
+                                          onPressed: () async {
+                                            try {
+                                              await pb.collection('services').delete(item['id']);
+                                              await _loadServicesFromPocketBase();
+                                              setLayananState(() {});
+                                            } catch (e) {
+                                              debugPrint('Gagal hapus layanan: $e');
+                                            }
+                                          },
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showKelolaParfumDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Kelola Parfum', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+          content: const Text('Fitur kelola aroma parfum siap dikembangkan.', style: TextStyle(fontSize: 11)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('TUTUP', style: TextStyle(fontSize: 11)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = context.watch<SettingsProvider>();
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF3F4F6),
+      body: Center(
+        child: Container(
+          width: 390,
+          color: Colors.white,
+          child: Column(
+            children: [
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [Color(0xFF1D4ED8), Color(0xFF2563EB)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.only(
+                        bottomLeft: Radius.circular(24),
+                        bottomRight: Radius.circular(24),
+                      ),
+                    ),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 36),
+                    child: SafeArea(
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const CircleAvatar(
+                                radius: 14,
+                                backgroundColor: Colors.amber,
+                                child: Icon(Icons.store, size: 16, color: Colors.white),
+                              ),
+                              const SizedBox(width: 8),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Text(
+                                        settings.namaToko,
+                                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(color: Colors.amber, borderRadius: BorderRadius.circular(6)),
+                                        child: Text(
+                                          settings.userRole,
+                                          style: const TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.black),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  Text(settings.emailToko, style: const TextStyle(color: Colors.white70, fontSize: 10)),
+                                ],
+                              ),
+                            ],
+                          ),
+                          ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white24,
+                              foregroundColor: Colors.white,
+                              elevation: 0,
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                            ),
+                            onPressed: _loadOrdersFromPocketBase,
+                            icon: const Icon(Icons.refresh, size: 14),
+                            label: const Text('Refresh', style: TextStyle(fontSize: 11)),
                           ),
                         ],
                       ),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 15, color: Colors.red),
-                      onPressed: () async {
-                        try {
-                          await pb.collection('services').delete(item['id']);
-                          _loadServicesFromPocketBase();
-                          setLayananState(() {});
-                        } catch (e) {
-                          debugPrint('Gagal hapus layanan: $e');
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              );
-            },
-          ),
-  )
-
- /* Widget _buildLayananItem(
-    String title,
-    String price, [
-    String estimasi = '-',
-  ]) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF9FAFB),
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: Colors.grey[200]!),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
                   ),
-                ),
-                const SizedBox(height: 2),
-                Row(
+                  Positioned(
+                    bottom: -22,
+                    left: 12,
+                    right: 12,
+                    child: Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFEF3C7),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFFDE68A)),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.08),
+                            blurRadius: 8,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
+                            children: [
+                              const Text('📢 ', style: TextStyle(fontSize: 14)),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: const [
+                                  Text(
+                                    'Promo Cashback Token lndr melalui App',
+                                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF92400E)),
+                                  ),
+                                  Text(
+                                    'Berlaku sampai akhir bulan. Yuk tingkatkan omzet!',
+                                    style: TextStyle(fontSize: 8, color: Color(0xFFB45309)),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(color: const Color(0xFFF59E0B), borderRadius: BorderRadius.circular(6)),
+                            child: const Text('NEW', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.white)),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 28),
+              Expanded(
+                child: IndexedStack(
+                  index: _currentIndex,
                   children: [
-                    Text(
-                      price,
-                      style: const TextStyle(
-                        fontSize: 9,
-                        color: Colors.blue,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    if (estimasi != '-') ...[
-                      const SizedBox(width: 8),
-                      Text(
-                        '• $estimasi',
-                        style: const TextStyle(fontSize: 9, color: Colors.grey),
-                      ),
-                    ],
+                    _buildBerandaTab(),
+                    _buildOrderTab(),
+                    _buildReportTab(),
+                    _buildPengaturanTab(settings),
                   ],
                 ),
-              ],
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline, size: 15, color: Colors.red),
-            onPressed: () {},
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-          ),
-        ],
-      ),
-    );
-  }*/
-
-  @override
-    Widget build(BuildContext context) {
-      final settings = context.watch<SettingsProvider>();
-  
-      return Scaffold(
-        backgroundColor: const Color(0xFFF3F4F6),
-        body: Center(
-          child: Container(
-            width: 390,
-            color: Colors.white,
-            child: Column(
-              children: [
-                // --- STACK HEADER BIRU & BANNER PROMO MELAYANG ---
-                Stack(
-                  clipBehavior: Clip.none,
-                  children: [
-                    Container(
-                      decoration: const BoxDecoration(
-                        gradient: LinearGradient(
-                          colors: [Color(0xFF1D4ED8), Color(0xFF2563EB)],
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                        ),
-                        borderRadius: BorderRadius.only(
-                          bottomLeft: Radius.circular(24),
-                          bottomRight: Radius.circular(24),
-                        ),
-                      ),
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 36),
-                      child: SafeArea(
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                const CircleAvatar(
-                                  radius: 14,
-                                  backgroundColor: Colors.amber,
-                                  child: Icon(Icons.store, size: 16, color: Colors.white),
-                                ),
-                                const SizedBox(width: 8),
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Text(
-                                          settings.namaToko,
-                                          style: const TextStyle(
-                                            color: Colors.white,
-                                            fontWeight: FontWeight.bold,
-                                            fontSize: 13,
-                                          ),
-                                        ),
-                                        const SizedBox(width: 4),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                          decoration: BoxDecoration(
-                                            color: Colors.amber,
-                                            borderRadius: BorderRadius.circular(6),
-                                          ),
-                                          child: Text(
-                                            settings.userRole,
-                                            style: const TextStyle(
-                                              fontSize: 8,
-                                              fontWeight: FontWeight.bold,
-                                              color: Colors.black,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    Text(
-                                      settings.emailToko,
-                                      style: const TextStyle(color: Colors.white70, fontSize: 10),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.white24,
-                                foregroundColor: Colors.white,
-                                elevation: 0,
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                minimumSize: Size.zero,
-                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                              ),
-                              onPressed: _loadOrdersFromPocketBase,
-                              icon: const Icon(Icons.refresh, size: 14),
-                              label: const Text('Refresh', style: TextStyle(fontSize: 11)),
-                            ),
-                          ],
-                        ),
-                      ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                color: Colors.white,
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2563EB),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                     ),
-  
-                    Positioned(
-                      bottom: -22,
-                      left: 12,
-                      right: 12,
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFEF3C7),
-                          borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: const Color(0xFFFDE68A)),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withOpacity(0.08),
-                              blurRadius: 8,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                const Text('📢 ', style: TextStyle(fontSize: 14)),
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Promo Cashback Token lndr melalui App',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                        color: Color(0xFF92400E),
-                                      ),
-                                    ),
-                                    Text(
-                                      'Berlaku sampai akhir bulan. Yuk tingkatkan omzet!',
-                                      style: TextStyle(fontSize: 8, color: Color(0xFFB45309)),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF59E0B),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: const Text(
-                                'NEW',
-                                style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.white),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
+                    onPressed: () => _showActionDialog(),
+                    child: const Text('MENU TRANSAKSI', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, letterSpacing: 0.5)),
+                  ),
+                ),
+              ),
+              Container(
+                decoration: BoxDecoration(border: Border(top: BorderSide(color: Colors.grey[200]!))),
+                child: BottomNavigationBar(
+                  currentIndex: _currentIndex,
+                  onTap: (index) => setState(() => _currentIndex = index),
+                  type: BottomNavigationBarType.fixed,
+                  selectedItemColor: const Color(0xFF2563EB),
+                  unselectedItemColor: Colors.grey,
+                  selectedLabelStyle: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+                  unselectedLabelStyle: const TextStyle(fontSize: 10),
+                  items: const [
+                    BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Beranda'),
+                    BottomNavigationBarItem(icon: Icon(Icons.shopping_cart), label: 'Order'),
+                    BottomNavigationBarItem(icon: Icon(Icons.insert_chart), label: 'Report'),
+                    BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Pengaturan'),
                   ],
                 ),
-                const SizedBox(height: 28),
-  
-                // --- KONTEN HALAMAN UTAMA ---
-                Expanded(
-                  child: IndexedStack(
-                    index: _currentIndex,
-                    children: [
-                      _buildBerandaTab(),
-                      _buildOrderTab(),
-                      _buildReportTab(),
-                      _buildPengaturanTab(settings),
-                    ],
-                  ),
-                ),
-  
-                // --- TOMBOL MENU TRANSAKSI ---
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  color: Colors.white,
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF2563EB),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                      ),
-                      onPressed: () => _showActionDialog(),
-                      child: const Text(
-                        'MENU TRANSAKSI',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                          letterSpacing: 0.5,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-  
-                // --- BOTTOM NAVIGATION BAR ---
-                Container(
-                  decoration: BoxDecoration(
-                    border: Border(top: BorderSide(color: Colors.grey[200]!)),
-                  ),
-                  child: BottomNavigationBar(
-                    currentIndex: _currentIndex,
-                    onTap: (index) {
-                      setState(() {
-                        _currentIndex = index;
-                      });
-                    },
-                    type: BottomNavigationBarType.fixed,
-                    selectedItemColor: const Color(0xFF2563EB),
-                    unselectedItemColor: Colors.grey,
-                    selectedLabelStyle: const TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    unselectedLabelStyle: const TextStyle(fontSize: 10),
-                    items: const [
-                      BottomNavigationBarItem(
-                        icon: Icon(Icons.home),
-                        label: 'Beranda',
-                      ),
-                      BottomNavigationBarItem(
-                        icon: Icon(Icons.shopping_cart),
-                        label: 'Order',
-                      ),
-                      BottomNavigationBarItem(
-                        icon: Icon(Icons.insert_chart),
-                        label: 'Report',
-                      ),
-                      BottomNavigationBarItem(
-                        icon: Icon(Icons.settings),
-                        label: 'Pengaturan',
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
-      );
-    }
-    
-  // 2. ORDER TAB (Menampilkan Pelanggan Sesuai Status)
+      ),
+    );
+  }
+
   Widget _buildOrderTab() {
     final List<String> statusFilter = ['Antrian', 'Proses', 'Selesai', 'Batal'];
     final String selectedStatus = statusFilter[_orderFilterIndex];
-
-    // Filter daftar orderan berdasarkan tab status yang dipilih
-    final filteredOrders = _ordersHariIni
-        .where((o) => o['status'] == selectedStatus)
-        .toList();
+    final filteredOrders = _ordersHariIni.where((o) => o['status'] == selectedStatus).toList();
 
     return Padding(
       padding: const EdgeInsets.all(12),
@@ -2083,72 +1479,33 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
         children: [
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.grey[200]!),
-            ),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey[200]!)),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: const [
-                    Text(
-                      'Daftar Order Pelanggan',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
+                    Text('Daftar Order Pelanggan', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                     SizedBox(height: 2),
-                    Text(
-                      'Klik item untuk melihat detail & memproses',
-                      style: TextStyle(fontSize: 10, color: Colors.grey),
-                    ),
+                    Text('Klik item untuk melihat detail & memproses', style: TextStyle(fontSize: 10, color: Colors.grey)),
                   ],
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEFF6FF),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: const Color(0xFFBFDBFE),
-                      width: 0.8,
-                    ),
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(color: const Color(0xFFEFF6FF), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFBFDBFE), width: 0.8)),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(
-                        Icons.receipt_long_rounded,
-                        size: 14,
-                        color: Color(0xFF2563EB),
-                      ),
+                      const Icon(Icons.receipt_long_rounded, size: 14, color: Color(0xFF2563EB)),
                       const SizedBox(width: 6),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'TOTAL TRANSAKSI',
-                            style: TextStyle(
-                              fontSize: 7,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF1E40AF),
-                              letterSpacing: 0.5,
-                            ),
-                          ),
+                          const Text('TOTAL TRANSAKSI', style: TextStyle(fontSize: 7, fontWeight: FontWeight.w700, color: Color(0xFF1E40AF), letterSpacing: 0.5)),
                           Text(
                             '${_customerList.where((o) => o['status'] == 'Antrian' || o['status'] == 'Proses' || o['status'] == 'Selesai').length} Order',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1D4ED8),
-                            ),
+                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF1D4ED8)),
                           ),
                         ],
                       ),
@@ -2158,54 +1515,23 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
               ],
             ),
           ),
-
           const SizedBox(height: 12),
-
           Container(
             padding: const EdgeInsets.all(4),
-            decoration: BoxDecoration(
-              color: Colors.grey[100],
-              borderRadius: BorderRadius.circular(20),
-            ),
+            decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(20)),
             child: Row(
               children: [
-                _buildSubTab(
-                  'Antrian',
-                  0,
-                  _orderFilterIndex,
-                  (idx) => setState(() => _orderFilterIndex = idx),
-                ),
-                _buildSubTab(
-                  'Proses',
-                  1,
-                  _orderFilterIndex,
-                  (idx) => setState(() => _orderFilterIndex = idx),
-                ),
-                _buildSubTab(
-                  'Selesai',
-                  2,
-                  _orderFilterIndex,
-                  (idx) => setState(() => _orderFilterIndex = idx),
-                ),
-                _buildSubTab(
-                  'Batal',
-                  3,
-                  _orderFilterIndex,
-                  (idx) => setState(() => _orderFilterIndex = idx),
-                ),
+                _buildSubTab('Antrian', 0, _orderFilterIndex, (idx) => setState(() => _orderFilterIndex = idx)),
+                _buildSubTab('Proses', 1, _orderFilterIndex, (idx) => setState(() => _orderFilterIndex = idx)),
+                _buildSubTab('Selesai', 2, _orderFilterIndex, (idx) => setState(() => _orderFilterIndex = idx)),
+                _buildSubTab('Batal', 3, _orderFilterIndex, (idx) => setState(() => _orderFilterIndex = idx)),
               ],
             ),
           ),
           const SizedBox(height: 12),
-
           Expanded(
             child: filteredOrders.isEmpty
-                ? const Center(
-                    child: Text(
-                      'Tidak ada orderan di status ini.',
-                      style: TextStyle(fontSize: 11, color: Colors.grey),
-                    ),
-                  )
+                ? const Center(child: Text('Tidak ada orderan di status ini.', style: TextStyle(fontSize: 11, color: Colors.grey)))
                 : ListView.builder(
                     physics: const BouncingScrollPhysics(),
                     itemCount: filteredOrders.length,
@@ -2214,55 +1540,19 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                       return Card(
                         elevation: 0,
                         margin: const EdgeInsets.only(bottom: 8),
-                        shape: RoundedRectangleBorder(
-                          side: BorderSide(color: Colors.grey[200]!),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
+                        shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey[200]!), borderRadius: BorderRadius.circular(10)),
                         child: ListTile(
                           dense: true,
-                          leading: const CircleAvatar(
-                            radius: 16,
-                            backgroundColor: Color(0xFFEFF6FF),
-                            child: Icon(
-                              Icons.person,
-                              color: Color(0xFF2563EB),
-                              size: 18,
-                            ),
-                          ),
-                          title: Text(
-                            order['customer'] ?? '-',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12,
-                            ),
-                          ),
-                          subtitle: Text(
-                            '${order['phone']} • ${order['itemCount']} Layanan',
-                            style: const TextStyle(
-                              fontSize: 9,
-                              color: Colors.grey,
-                            ),
-                          ),
+                          leading: const CircleAvatar(radius: 16, backgroundColor: Color(0xFFEFF6FF), child: Icon(Icons.person, color: Color(0xFF2563EB), size: 18)),
+                          title: Text(order['customer'] ?? '-', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                          subtitle: Text('${order['phone']} • ${order['itemCount']} Layanan', style: const TextStyle(fontSize: 9, color: Colors.grey)),
                           trailing: Column(
                             mainAxisAlignment: MainAxisAlignment.center,
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text(
-                                'Rp ${(order['total'] as double).toInt()}',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 11,
-                                  color: Color(0xFF2563EB),
-                                ),
-                              ),
+                              Text('Rp ${(order['total'] as double).toInt()}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFF2563EB))),
                               const SizedBox(height: 2),
-                              const Text(
-                                'Lihat Detail >',
-                                style: TextStyle(
-                                  fontSize: 8,
-                                  color: Colors.grey,
-                                ),
-                              ),
+                              const Text('Lihat Detail >', style: TextStyle(fontSize: 8, color: Colors.grey)),
                             ],
                           ),
                           onTap: () => _showDetailOrderDialog(order),
@@ -2276,7 +1566,6 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
     );
   }
 
-  // DIALOG DETAIL ORDER PELANGGAN (SESUAI GAMBAR 2)
   void _showDetailOrderDialog(Map<String, dynamic> order) {
     showDialog(
       context: context,
@@ -2284,9 +1573,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
         return StatefulBuilder(
           builder: (context, setModalState) {
             return Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               child: Container(
                 width: 400,
                 constraints: const BoxConstraints(maxHeight: 620),
@@ -2302,20 +1589,8 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: const [
-                              Text(
-                                'Detail Order Pelanggan',
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                ),
-                              ),
-                              Text(
-                                'Nota #000001',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.grey,
-                                ),
-                              ),
+                              Text('Detail Order Pelanggan', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                              Text('Nota #000001', style: TextStyle(fontSize: 10, color: Colors.grey)),
                             ],
                           ),
                           IconButton(
@@ -2327,75 +1602,33 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                         ],
                       ),
                       const SizedBox(height: 12),
-
-                      // PELANGGAN
                       Container(
                         padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF9FAFB),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.grey[200]!),
-                        ),
+                        decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey[200]!)),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Text(
-                                  'PELANGGAN',
-                                  style: TextStyle(
-                                    fontSize: 8,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey,
-                                  ),
-                                ),
+                                const Text('PELANGGAN', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.grey)),
                                 const SizedBox(height: 2),
-                                Text(
-                                  order['customer'] ?? '-',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                                Text(
-                                  order['phone'] ?? '-',
-                                  style: const TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.grey,
-                                  ),
-                                ),
+                                Text(order['customer'] ?? '-', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+                                Text(order['phone'] ?? '-', style: const TextStyle(fontSize: 10, color: Colors.grey)),
                               ],
                             ),
-                            const Icon(
-                              Icons.person,
-                              size: 28,
-                              color: Colors.grey,
-                            ),
+                            const Icon(Icons.person, size: 28, color: Colors.grey),
                           ],
                         ),
                       ),
                       const SizedBox(height: 10),
-
-                      // DAFTAR LAYANAN
                       Container(
                         padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF9FAFB),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.grey[200]!),
-                        ),
+                        decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey[200]!)),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'DAFTAR LAYANAN / ITEM',
-                              style: TextStyle(
-                                fontSize: 8,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.grey,
-                              ),
-                            ),
+                            const Text('DAFTAR LAYANAN / ITEM', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.grey)),
                             const SizedBox(height: 8),
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -2403,67 +1636,29 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                                 Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text(
-                                      'Cuci & Setrika Komplit',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                    Text(
-                                      '${order['itemCount']} Layanan',
-                                      style: const TextStyle(
-                                        fontSize: 9,
-                                        color: Colors.grey,
-                                      ),
-                                    ),
+                                    const Text('Cuci & Setrika Komplit', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                                    Text('${order['itemCount']} Layanan', style: const TextStyle(fontSize: 9, color: Colors.grey)),
                                   ],
                                 ),
-                                Text(
-                                  'Rp ${(order['total'] as double).toInt()}',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 11,
-                                    color: Color(0xFF2563EB),
-                                  ),
-                                ),
+                                Text('Rp ${(order['total'] as double).toInt()}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Color(0xFF2563EB))),
                               ],
                             ),
                           ],
                         ),
                       ),
                       const SizedBox(height: 10),
-
-                      // PARFUM & STATUS PEMBAYARAN
                       Row(
                         children: [
                           Expanded(
                             child: Container(
                               padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF9FAFB),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: Colors.grey[200]!),
-                              ),
+                              decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey[200]!)),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: const [
-                                  Text(
-                                    'AROMA PARFUM',
-                                    style: TextStyle(
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
+                                  Text('AROMA PARFUM', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.grey)),
                                   SizedBox(height: 2),
-                                  Text(
-                                    'Standard / Original',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
+                                  Text('Standard / Original', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                                 ],
                               ),
                             ),
@@ -2472,31 +1667,13 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                           Expanded(
                             child: Container(
                               padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF9FAFB),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: Colors.grey[200]!),
-                              ),
+                              decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey[200]!)),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: const [
-                                  Text(
-                                    'STATUS PEMBAYARAN',
-                                    style: TextStyle(
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
+                                  Text('STATUS PEMBAYARAN', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.grey)),
                                   SizedBox(height: 2),
-                                  Text(
-                                    'Belum Lunas',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.teal,
-                                    ),
-                                  ),
+                                  Text('Belum Lunas', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.teal)),
                                 ],
                               ),
                             ),
@@ -2504,37 +1681,18 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                         ],
                       ),
                       const SizedBox(height: 10),
-
-                      // TANGGAL & ESTIMASI (OTOMATIS SESUAI HARI INI)
                       Row(
                         children: [
                           Expanded(
                             child: Container(
                               padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF9FAFB),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(color: Colors.grey[200]!),
-                              ),
+                              decoration: BoxDecoration(color: const Color(0xFFF9FAFB), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey[200]!)),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text(
-                                    'TANGGAL MASUK',
-                                    style: TextStyle(
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                      color: Colors.grey,
-                                    ),
-                                  ),
+                                  const Text('TANGGAL MASUK', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.grey)),
                                   const SizedBox(height: 2),
-                                  Text(
-                                    '${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}',
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
+                                  Text('${DateTime.now().day}/${DateTime.now().month}/${DateTime.now().year}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                                 ],
                               ),
                             ),
@@ -2543,75 +1701,34 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                           Expanded(
                             child: Container(
                               padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFFEF3C7),
-                                borderRadius: BorderRadius.circular(8),
-                                border: Border.all(
-                                  color: const Color(0xFFFDE68A),
-                                ),
-                              ),
+                              decoration: BoxDecoration(color: const Color(0xFFFEF3C7), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFFDE68A))),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const Text(
-                                    'ESTIMASI SELESAI',
-                                    style: TextStyle(
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF92400E),
-                                    ),
-                                  ),
+                                  const Text('ESTIMASI SELESAI', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Color(0xFF92400E))),
                                   const SizedBox(height: 2),
-                                  Text(
-                                    // Default estimasi +2 hari dari tanggal masuk
-                                    '${DateTime.now().add(const Duration(days: 2)).day}/${DateTime.now().add(const Duration(days: 2)).month}/${DateTime.now().year}',
-                                    style: const TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF92400E),
-                                    ),
-                                  ),
+                                  Text('${DateTime.now().add(const Duration(days: 2)).day}/${DateTime.now().add(const Duration(days: 2)).month}/${DateTime.now().year}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF92400E))),
                                 ],
                               ),
                             ),
                           ),
                         ],
                       ),
-                      // CATATAN ORDER
+                      const SizedBox(height: 10),
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFEF3C7).withOpacity(0.5),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: const Color(0xFFFDE68A)),
-                        ),
+                        decoration: BoxDecoration(color: const Color(0xFFFEF3C7).withOpacity(0.5), borderRadius: BorderRadius.circular(8), border: Border.all(color: const Color(0xFFFDE68A))),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: const [
-                            Text(
-                              'CATATAN ORDER',
-                              style: TextStyle(
-                                fontSize: 8,
-                                fontWeight: FontWeight.bold,
-                                color: Color(0xFF92400E),
-                              ),
-                            ),
+                            Text('CATATAN ORDER', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Color(0xFF92400E))),
                             SizedBox(height: 2),
-                            Text(
-                              'Tidak ada catatan',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontStyle: FontStyle.italic,
-                                color: Color(0xFF92400E),
-                              ),
-                            ),
+                            Text('Tidak ada catatan', style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic, color: Color(0xFF92400E))),
                           ],
                         ),
                       ),
                       const SizedBox(height: 16),
-
-                      // TOMBOL AKSI UPDATE STATUS (ANTRIAN -> PROSES -> SELESAI)
                       if (order['status'] == 'Antrian') ...[
                         SizedBox(
                           width: double.infinity,
@@ -2620,36 +1737,24 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                               backgroundColor: const Color(0xFF2563EB),
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 10),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
                             onPressed: () async {
                               try {
                                 if (order['id'] != null) {
                                   await pb.collection('orders').update(order['id'], body: {'status': 'Proses'});
                                 }
-                                setState(() {
-                                  order['status'] = 'Proses';
-                                });
+                                setState(() => order['status'] = 'Proses');
                                 if (mounted) {
                                   Navigator.pop(context);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('Order dipindahkan ke Proses!')),
-                                  );
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Order dipindahkan ke Proses!')));
                                 }
                               } catch (e) {
-                                debugPrint('Error update status ke PocketBase: $e');
+                                debugPrint('Error update status: $e');
                               }
                             },
                             icon: const Icon(Icons.bolt, size: 16),
-                            label: const Text(
-                              '⚡ Lanjut Proses Order (Ke Proses)',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            label: const Text('⚡ Lanjut Proses Order (Ke Proses)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                           ),
                         ),
                         const SizedBox(height: 8),
@@ -2661,42 +1766,28 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                               backgroundColor: Colors.green,
                               foregroundColor: Colors.white,
                               padding: const EdgeInsets.symmetric(vertical: 10),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
                             onPressed: () async {
                               try {
                                 if (order['id'] != null) {
                                   await pb.collection('orders').update(order['id'], body: {'status': 'Selesai'});
                                 }
-                                setState(() {
-                                  order['status'] = 'Selesai';
-                                });
+                                setState(() => order['status'] = 'Selesai');
                                 if (mounted) {
                                   Navigator.pop(context);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(content: Text('Order Selesai!')),
-                                  );
+                                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Order Selesai!')));
                                 }
                               } catch (e) {
-                                debugPrint('Error update status ke PocketBase: $e');
+                                debugPrint('Error update status: $e');
                               }
                             },
                             icon: const Icon(Icons.check_circle, size: 16),
-                            label: const Text(
-                              '✔ Selesaikan Order (Ke Selesai)',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            label: const Text('✔ Selesaikan Order (Ke Selesai)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                           ),
                         ),
                         const SizedBox(height: 8),
                       ],
-
-                      // TOMBOL KIRIM WA NOTIFIKASI
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
@@ -2704,24 +1795,14 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                             backgroundColor: const Color(0xFF10B981),
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 10),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                            ),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                           ),
                           onPressed: () {},
                           icon: const Icon(Icons.chat, size: 16),
-                          label: const Text(
-                            '📲 Kirim WA Notifikasi Selesai',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          label: const Text('📲 Kirim WA Notifikasi Selesai', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                         ),
                       ),
                       const SizedBox(height: 16),
-
-                      // TOMBOL BATALKAN ORDER & EDIT LAYANAN
                       Row(
                         children: [
                           Expanded(
@@ -2730,24 +1811,12 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                                 backgroundColor: const Color(0xFFFEE2E2),
                                 foregroundColor: const Color(0xFFDC2626),
                                 elevation: 0,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 10,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                               ),
-                              onPressed: () {
-                                _showKonfirmasiBatalDialog(order);
-                              },
+                              onPressed: () => _showKonfirmasiBatalDialog(order),
                               icon: const Icon(Icons.close, size: 16),
-                              label: const Text(
-                                'Batalkan Order',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              label: const Text('Batalkan Order', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                             ),
                           ),
                           const SizedBox(width: 8),
@@ -2757,76 +1826,37 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                                 backgroundColor: const Color(0xFFEFF6FF),
                                 foregroundColor: const Color(0xFF2563EB),
                                 elevation: 0,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 10,
-                                ),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                               ),
-                              onPressed: () {
-                                _showEditLayananDialog(order);
-                              },
+                              onPressed: () => _showEditLayananDialog(order),
                               icon: const Icon(Icons.edit, size: 16),
-                              label: const Text(
-                                'Edit Layanan',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                              label: const Text('Edit Layanan', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 16),
-
-                      // TOTAL PRICE & BAYAR
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'TOTAL PRICE',
-                                style: TextStyle(
-                                  fontSize: 8,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.grey,
-                                ),
-                              ),
-                              Text(
-                                'Rp ${(order['total'] as double).toInt()}',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: Color(0xFF2563EB),
-                                ),
-                              ),
+                              const Text('TOTAL PRICE', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.grey)),
+                              Text('Rp ${(order['total'] as double).toInt()}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2563EB))),
                             ],
                           ),
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF10B981),
                               foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 8,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
                             onPressed: () {},
                             icon: const Icon(Icons.payments, size: 14),
-                            label: const Text(
-                              'BAYAR NOW',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            label: const Text('BAYAR NOW', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                           ),
                         ],
                       ),
@@ -2841,18 +1871,12 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
     );
   }
 
-  // DIALOG LIST ORDERAN BERDASARKAN RINGKASAN CUCIAN
-  void _showRingkasanOrderDialog(
-    String title,
-    List<Map<String, dynamic>> listOrder,
-  ) {
+  void _showRingkasanOrderDialog(String title, List<Map<String, dynamic>> listOrder) {
     showDialog(
       context: context,
       builder: (context) {
         return Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           child: Container(
             width: 380,
             constraints: const BoxConstraints(maxHeight: 480),
@@ -2864,13 +1888,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
+                    Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                     IconButton(
                       icon: const Icon(Icons.close, size: 16),
                       onPressed: () => Navigator.pop(context),
@@ -2882,12 +1900,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                 const SizedBox(height: 10),
                 Expanded(
                   child: listOrder.isEmpty
-                      ? const Center(
-                          child: Text(
-                            'Tidak ada orderan di kategori ini.',
-                            style: TextStyle(fontSize: 11, color: Colors.grey),
-                          ),
-                        )
+                      ? const Center(child: Text('Tidak ada orderan di kategori ini.', style: TextStyle(fontSize: 11, color: Colors.grey)))
                       : ListView.builder(
                           physics: const BouncingScrollPhysics(),
                           itemCount: listOrder.length,
@@ -2896,54 +1909,20 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                             return Card(
                               elevation: 0,
                               margin: const EdgeInsets.only(bottom: 8),
-                              shape: RoundedRectangleBorder(
-                                side: BorderSide(color: Colors.grey[200]!),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
+                              shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey[200]!), borderRadius: BorderRadius.circular(8)),
                               child: ListTile(
                                 dense: true,
-                                leading: const Icon(
-                                  Icons.local_laundry_service,
-                                  color: Color(0xFF2563EB),
-                                  size: 18,
-                                ),
-                                title: Text(
-                                  order['customer'] ?? '-',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  '${order['itemCount']} Layanan • Rp ${(order['total'] as double).toInt()}',
-                                  style: const TextStyle(
-                                    fontSize: 9,
-                                    color: Colors.grey,
-                                  ),
-                                ),
+                                leading: const Icon(Icons.local_laundry_service, color: Color(0xFF2563EB), size: 18),
+                                title: Text(order['customer'] ?? '-', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                                subtitle: Text('${order['itemCount']} Layanan • Rp ${(order['total'] as double).toInt()}', style: const TextStyle(fontSize: 9, color: Colors.grey)),
                                 trailing: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 6,
-                                    vertical: 2,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.blue[50],
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    order['status'] ?? '-',
-                                    style: const TextStyle(
-                                      fontSize: 8,
-                                      fontWeight: FontWeight.bold,
-                                      color: Color(0xFF2563EB),
-                                    ),
-                                  ),
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(4)),
+                                  child: Text(order['status'] ?? '-', style: const TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Color(0xFF2563EB))),
                                 ),
                                 onTap: () {
-                                  Navigator.pop(context); // Tutup ringkasan
-                                  _showDetailOrderDialog(
-                                    order,
-                                  ); // Buka detail order
+                                  Navigator.pop(context);
+                                  _showDetailOrderDialog(order);
                                 },
                               ),
                             );
@@ -2958,57 +1937,28 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
     );
   }
 
-  // DIALOG KONFIRMASI BATAL TRANSAKSI
   void _showKonfirmasiBatalDialog(Map<String, dynamic> order) {
     showDialog(
       context: context,
       builder: (context) {
         return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          title: const Text(
-            'Konfirmasi Pembatalan',
-            style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-          ),
-          content: Text(
-            'Apakah anda yakin membatalkan transaksi untuk "${order['customer']}"?',
-            style: const TextStyle(fontSize: 11),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Text('Konfirmasi Pembatalan', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+          content: Text('Apakah anda yakin membatalkan transaksi untuk "${order['customer']}"?', style: const TextStyle(fontSize: 11)),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text(
-                'TIDAK',
-                style: TextStyle(fontSize: 11, color: Colors.grey),
-              ),
+              child: const Text('TIDAK', style: TextStyle(fontSize: 11, color: Colors.grey)),
             ),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.redAccent,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
               onPressed: () {
-                setState(() {
-                  order['status'] = 'Batal'; // Pindah status ke daftar Batal
-                });
-                Navigator.pop(context); // Tutup Dialog Konfirmasi
-                Navigator.pop(context); // Tutup Dialog Detail Order
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      'Transaksi ${order['customer']} berhasil dibatalkan!',
-                    ),
-                  ),
-                );
+                setState(() => order['status'] = 'Batal');
+                Navigator.pop(context);
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Transaksi ${order['customer']} berhasil dibatalkan!')));
               },
-              child: const Text(
-                'YA, BATALKAN',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-              ),
+              child: const Text('YA, BATALKAN', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
             ),
           ],
         );
@@ -3016,7 +1966,6 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
     );
   }
 
-  // DIALOG EDIT ORDER TRANSAKSI (MIRIP FORM BUAT ORDER)
   void _showEditLayananDialog(Map<String, dynamic> order) {
     String selectedParfum = 'Standard / Original';
     double diskonPersen = 0.0;
@@ -3026,13 +1975,10 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (context, setModalState) {
-            final double totalSetelahDiskon =
-                _totalPrice - (_totalPrice * (diskonPersen / 100));
+            final double totalSetelahDiskon = _totalPrice - (_totalPrice * (diskonPersen / 100));
 
             return Dialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               child: Container(
                 width: 400,
                 constraints: const BoxConstraints(maxHeight: 560),
@@ -3045,13 +1991,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text(
-                            'Edit Order Transaksi',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 14,
-                            ),
-                          ),
+                          const Text('Edit Order Transaksi', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                           IconButton(
                             icon: const Icon(Icons.close, size: 18),
                             onPressed: () => Navigator.pop(context),
@@ -3061,142 +2001,61 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                         ],
                       ),
                       const SizedBox(height: 12),
-
-                      // PELANGGAN (NAMA TIDAK BISA DIUBAH / READ-ONLY, TOMBOL CARI DIHILANGKAN)
                       Container(
                         width: double.infinity,
                         padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: Colors.grey[300]!),
-                        ),
+                        decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey[300]!)),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
-                              'Pelanggan',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey,
-                              ),
-                            ),
+                            const Text('Pelanggan', style: TextStyle(fontSize: 10, color: Colors.grey)),
                             const SizedBox(height: 2),
-                            Text(
-                              '${order['customer'] ?? '-'} (${order['phone'] ?? '-'})',
-                              style: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
-                            ),
+                            Text('${order['customer'] ?? '-'} (${order['phone'] ?? '-'})', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
                           ],
                         ),
                       ),
                       const SizedBox(height: 10),
-
-                      // KERANJANG LAYANAN
                       Container(
                         padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[50],
-                          borderRadius: BorderRadius.circular(10),
-                        ),
+                        decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(10)),
                         child: Column(
                           children: [
                             Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                const Text(
-                                  'Daftar Layanan (Keranjang)',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.grey,
-                                  ),
-                                ),
+                                const Text('Daftar Layanan (Keranjang)', style: TextStyle(fontSize: 10, color: Colors.grey)),
                                 TextButton(
                                   onPressed: () async {
                                     await _showPilihLayananDialog();
                                     setModalState(() {});
                                   },
-                                  style: TextButton.styleFrom(
-                                    backgroundColor: Colors.cyan[50],
-                                    foregroundColor: Colors.cyan[800],
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    minimumSize: Size.zero,
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
-                                  ),
-                                  child: const Text(
-                                    '+ Tambah Layanan',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
+                                  style: TextButton.styleFrom(backgroundColor: Colors.cyan[50], foregroundColor: Colors.cyan[800], padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                                  child: const Text('+ Tambah Layanan', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 12),
                             _cartItems.isEmpty
-                                ? const Center(
-                                    child: Padding(
-                                      padding: EdgeInsets.symmetric(
-                                        vertical: 8,
-                                      ),
-                                      child: Text(
-                                        'Belum ada layanan yang ditambahkan.',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          color: Colors.grey,
-                                          fontStyle: FontStyle.italic,
-                                        ),
-                                      ),
-                                    ),
-                                  )
+                                ? const Center(child: Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Text('Belum ada layanan yang ditambahkan.', style: TextStyle(fontSize: 10, color: Colors.grey, fontStyle: FontStyle.italic))))
                                 : ListView.builder(
                                     shrinkWrap: true,
-                                    physics:
-                                        const NeverScrollableScrollPhysics(),
+                                    physics: const NeverScrollableScrollPhysics(),
                                     itemCount: _cartItems.length,
                                     itemBuilder: (context, index) {
                                       final cart = _cartItems[index];
                                       return ListTile(
                                         dense: true,
                                         contentPadding: EdgeInsets.zero,
-                                        title: Text(
-                                          cart['nama'],
-                                          style: const TextStyle(
-                                            fontSize: 11,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                        subtitle: Text(
-                                          'Rp ${cart['harga'].toInt()} x ${cart['jumlah']}',
-                                        ),
+                                        title: Text(cart['nama'], style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                        subtitle: Text('Rp ${cart['harga'].toInt()} x ${cart['jumlah']}'),
                                         trailing: Row(
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
-                                            Text(
-                                              'Rp ${cart['total'].toInt()}',
-                                              style: const TextStyle(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.bold,
-                                              ),
-                                            ),
+                                            Text('Rp ${cart['total'].toInt()}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                                             IconButton(
-                                              icon: const Icon(
-                                                Icons.delete_outline,
-                                                size: 16,
-                                                color: Colors.red,
-                                              ),
+                                              icon: const Icon(Icons.delete_outline, size: 16, color: Colors.red),
                                               onPressed: () {
-                                                setModalState(() {
-                                                  _cartItems.removeAt(index);
-                                                });
+                                                setModalState(() => _cartItems.removeAt(index));
                                                 setState(() {});
                                               },
                                             ),
@@ -3209,183 +2068,73 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                         ),
                       ),
                       const SizedBox(height: 10),
-
-                      // AROMA PARFUM
-                      const Text(
-                        'Aroma Parfum',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey,
-                        ),
-                      ),
+                      const Text('Aroma Parfum', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
                       const SizedBox(height: 4),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey[300]!),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                        decoration: BoxDecoration(border: Border.all(color: Colors.grey[300]!), borderRadius: BorderRadius.circular(8)),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<String>(
                             value: selectedParfum,
                             isExpanded: true,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.black,
-                            ),
-                            items:
-                                <String>[
-                                  'Standard / Original',
-                                  'Lily',
-                                  'Akasia',
-                                  'Ocean Fresh',
-                                ].map((String value) {
-                                  return DropdownMenuItem<String>(
-                                    value: value,
-                                    child: Text(value),
-                                  );
-                                }).toList(),
-                            onChanged: (newValue) {
-                              setModalState(() {
-                                selectedParfum = newValue!;
-                              });
-                            },
+                            style: const TextStyle(fontSize: 11, color: Colors.black),
+                            items: <String>['Standard / Original', 'Lily', 'Akasia', 'Ocean Fresh'].map((String value) {
+                              return DropdownMenuItem<String>(value: value, child: Text(value));
+                            }).toList(),
+                            onChanged: (newValue) => setModalState(() => selectedParfum = newValue!),
                           ),
                         ),
                       ),
                       const SizedBox(height: 10),
-
-                      // CATATAN ORDER
-                      const Text(
-                        'Catatan Order',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey,
-                        ),
-                      ),
+                      const Text('Catatan Order', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
                       const SizedBox(height: 4),
                       TextField(
                         maxLines: 2,
                         style: const TextStyle(fontSize: 11),
                         decoration: InputDecoration(
-                          hintText:
-                              'Contoh: Luntur, Jangan Terlalu Panas, Baju warna putih dipisah',
-                          hintStyle: const TextStyle(
-                            fontSize: 10,
-                            color: Colors.grey,
-                          ),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: BorderSide(color: Colors.grey[300]!),
-                          ),
+                          hintText: 'Contoh: Luntur, Jangan Terlalu Panas, Baju warna putih dipisah',
+                          hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey[300]!)),
                           contentPadding: const EdgeInsets.all(8),
                         ),
                       ),
                       const SizedBox(height: 10),
-
-                      // PANEL DISKON
-                      const Text(
-                        'Diskon / Potongan Harga',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.grey,
-                        ),
-                      ),
+                      const Text('Diskon / Potongan Harga', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
                       const SizedBox(height: 4),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
-                        decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey[300]!),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                        decoration: BoxDecoration(border: Border.all(color: Colors.grey[300]!), borderRadius: BorderRadius.circular(8)),
                         child: DropdownButtonHideUnderline(
                           child: DropdownButton<double>(
                             value: diskonPersen,
                             isExpanded: true,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: Colors.black,
-                            ),
+                            style: const TextStyle(fontSize: 11, color: Colors.black),
                             items: const [
-                              DropdownMenuItem(
-                                value: 0.0,
-                                child: Text('Tanpa Diskon (0%)'),
-                              ),
-                              DropdownMenuItem(
-                                value: 5.0,
-                                child: Text('Diskon 5%'),
-                              ),
-                              DropdownMenuItem(
-                                value: 10.0,
-                                child: Text('Diskon 10%'),
-                              ),
-                              DropdownMenuItem(
-                                value: 15.0,
-                                child: Text('Diskon 15%'),
-                              ),
-                              DropdownMenuItem(
-                                value: 20.0,
-                                child: Text('Diskon 20%'),
-                              ),
+                              DropdownMenuItem(value: 0.0, child: Text('Tanpa Diskon (0%)')),
+                              DropdownMenuItem(value: 5.0, child: Text('Diskon 5%')),
+                              DropdownMenuItem(value: 10.0, child: Text('Diskon 10%')),
+                              DropdownMenuItem(value: 15.0, child: Text('Diskon 15%')),
+                              DropdownMenuItem(value: 20.0, child: Text('Diskon 20%')),
                             ],
-                            onChanged: (newValue) {
-                              setModalState(() {
-                                diskonPersen = newValue!;
-                              });
-                            },
+                            onChanged: (newValue) => setModalState(() => diskonPersen = newValue!),
                           ),
                         ),
                       ),
                       const SizedBox(height: 16),
-
-                      // BOTTOM BUTTON & TOTAL
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
-                                'TOTAL PRICE',
-                                style: TextStyle(
-                                  fontSize: 8,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.grey,
-                                ),
-                              ),
+                              const Text('TOTAL PRICE', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Colors.grey)),
                               if (diskonPersen > 0)
-                                Text(
-                                  'Rp ${_totalPrice.toInt()}',
-                                  style: const TextStyle(
-                                    fontSize: 9,
-                                    color: Colors.red,
-                                    decoration: TextDecoration.lineThrough,
-                                  ),
-                                ),
-                              Text(
-                                'Rp ${totalSetelahDiskon.toInt()}',
-                                style: const TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
+                                Text('Rp ${_totalPrice.toInt()}', style: const TextStyle(fontSize: 9, color: Colors.red, decoration: TextDecoration.lineThrough)),
+                              Text('Rp ${totalSetelahDiskon.toInt()}', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                             ],
                           ),
                           ElevatedButton(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF2563EB),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 10,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                            ),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB), foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
                             onPressed: () {
                               setState(() {
                                 if (_cartItems.isNotEmpty) {
@@ -3393,24 +2142,12 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                                   order['itemCount'] = _cartItems.length;
                                 }
                               });
-                              Navigator.pop(context); // Tutup dialog edit
-                              Navigator.pop(context); // Refresh dialog detail
+                              Navigator.pop(context);
+                              Navigator.pop(context);
                               _showDetailOrderDialog(order);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Detail order berhasil diperbarui!',
-                                  ),
-                                ),
-                              );
+                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Detail order berhasil diperbarui!')));
                             },
-                            child: const Text(
-                              'SIMPAN PERUBAHAN',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            child: const Text('SIMPAN PERUBAHAN', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                           ),
                         ],
                       ),
@@ -3425,7 +2162,6 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
     );
   }
 
-  // 3. REPORT TAB (Laporan Keuangan & Pelanggan Dinamis)
   Widget _buildReportTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
@@ -3435,273 +2171,100 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                '📊 LAPORAN HARI INI',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-              ),
+              const Text('📊 LAPORAN HARI INI', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Text(
-                  'Today',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: Colors.blue,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(12)),
+                child: const Text('Today', style: TextStyle(fontSize: 10, color: Colors.blue, fontWeight: FontWeight.bold)),
               ),
             ],
           ),
           const SizedBox(height: 10),
-
           Row(
             children: [
-              _buildStatCard(
-                'OMSET',
-                'Rp ${_totalOmsetHariIni.toInt()}',
-                Colors.amber[50]!,
-                Colors.amber[800]!,
-                Icons.monetization_on,
-              ),
+              _buildStatCard('OMSET', 'Rp ${_totalOmsetHariIni.toInt()}', Colors.amber[50]!, Colors.amber[800]!, Icons.monetization_on),
               const SizedBox(width: 6),
-              _buildStatCard(
-                'PENDAPATAN',
-                'Rp ${_totalOmsetHariIni.toInt()}',
-                Colors.green[50]!,
-                Colors.green[700]!,
-                Icons.trending_up,
-              ),
+              _buildStatCard('PENDAPATAN', 'Rp ${_totalOmsetHariIni.toInt()}', Colors.green[50]!, Colors.green[700]!, Icons.trending_up),
               const SizedBox(width: 6),
-              _buildStatCard(
-                'PENGELUARAN',
-                'Rp 0',
-                Colors.red[50]!,
-                Colors.red[700]!,
-                Icons.shopping_bag,
-              ),
+              _buildStatCard('PENGELUARAN', 'Rp 0', Colors.red[50]!, Colors.red[700]!, Icons.shopping_bag),
             ],
           ),
           const SizedBox(height: 6),
           Row(
             children: [
-              _buildStatCard(
-                'ORDER HARI INI',
-                '${_ordersHariIni.length}',
-                Colors.blue[50]!,
-                Colors.blue[700]!,
-                Icons.inventory_2,
-              ),
+              _buildStatCard('ORDER HARI INI', '${_ordersHariIni.length}', Colors.blue[50]!, Colors.blue[700]!, Icons.inventory_2),
               const SizedBox(width: 6),
-              _buildStatCard(
-                'SELESAI HARI INI',
-                '0',
-                Colors.teal[50]!,
-                Colors.teal[700]!,
-                Icons.check_circle,
-              ),
+              _buildStatCard('SELESAI HARI INI', '0', Colors.teal[50]!, Colors.teal[700]!, Icons.check_circle),
               const SizedBox(width: 6),
-              _buildStatCard(
-                'BATAL HARI INI',
-                '0',
-                Colors.pink[50]!,
-                Colors.pink[700]!,
-                Icons.cancel,
-              ),
+              _buildStatCard('BATAL HARI INI', '0', Colors.pink[50]!, Colors.pink[700]!, Icons.cancel),
             ],
           ),
           const SizedBox(height: 16),
-
-          const Text(
-            'Laporan Keuangan',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-          ),
+          const Text('Laporan Keuangan', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-
-          // TOGGLE TAB SUB-MENU
           Container(
             padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(
-              color: Colors.grey[200],
-              borderRadius: BorderRadius.circular(20),
-            ),
+            decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(20)),
             child: Row(
               children: [
-                _buildSubTab(
-                  'Transaksi',
-                  0,
-                  _reportTabFilterIndex,
-                  (idx) => setState(() => _reportTabFilterIndex = idx),
-                ),
-                _buildSubTab(
-                  'Laporan Keuangan',
-                  1,
-                  _reportTabFilterIndex,
-                  (idx) => setState(() => _reportTabFilterIndex = idx),
-                ),
-                _buildSubTab(
-                  'Pelanggan',
-                  2,
-                  _reportTabFilterIndex,
-                  (idx) => setState(() => _reportTabFilterIndex = idx),
-                ),
+                _buildSubTab('Transaksi', 0, _reportTabFilterIndex, (idx) => setState(() => _reportTabFilterIndex = idx)),
+                _buildSubTab('Laporan Keuangan', 1, _reportTabFilterIndex, (idx) => setState(() => _reportTabFilterIndex = idx)),
+                _buildSubTab('Pelanggan', 2, _reportTabFilterIndex, (idx) => setState(() => _reportTabFilterIndex = idx)),
               ],
             ),
           ),
           const SizedBox(height: 12),
-
-          // TAMPILAN DINAMIS SESUAI SUB-TAB YANG DIPILIH
           if (_reportTabFilterIndex == 0) ...[
-            // ITEM SUB-TAB TRANSAKSI
-            _buildMenuItem(
-              Icons.bar_chart,
-              Colors.green,
-              'Semua Transaksi',
-              'Lihat seluruh riwayat orderan laundry',
-              () => _showDefaultPage('Semua Transaksi'),
-            ),
-            _buildMenuItem(
-              Icons.grid_view,
-              Colors.amber[700]!,
-              'Transaksi per Layanan',
-              'Laporan orderan berdasarkan jenis layanan',
-              () => _showDefaultPage('Transaksi per Layanan'),
-            ),
-            _buildMenuItem(
-              Icons.hourglass_bottom,
-              Colors.orange,
-              'Transaksi Belum Selesai',
-              'Daftar orderan aktif / antrian / proses',
-              () => _showDefaultPage('Transaksi Belum Selesai'),
-            ),
-            _buildMenuItem(
-              Icons.check_box,
-              Colors.green,
-              'Transaksi Selesai',
-              'Daftar orderan yang sudah rampung',
-              () => _showDefaultPage('Transaksi Selesai'),
-            ),
-            _buildMenuItem(
-              Icons.disabled_by_default,
-              Colors.red,
-              'Transaksi Batal',
-              'Daftar orderan yang telah dibatalkan',
-              () => _showDefaultPage('Transaksi Batal'),
-            ),
+            _buildMenuItem(Icons.bar_chart, Colors.green, 'Semua Transaksi', 'Lihat seluruh riwayat orderan laundry', () => _showDefaultPage('Semua Transaksi')),
+            _buildMenuItem(Icons.grid_view, Colors.amber[700]!, 'Transaksi per Layanan', 'Laporan orderan berdasarkan jenis layanan', () => _showDefaultPage('Transaksi per Layanan')),
+            _buildMenuItem(Icons.hourglass_bottom, Colors.orange, 'Transaksi Belum Selesai', 'Daftar orderan aktif / antrian / proses', () => _showDefaultPage('Transaksi Belum Selesai')),
+            _buildMenuItem(Icons.check_box, Colors.green, 'Transaksi Selesai', 'Daftar orderan yang sudah rampung', () => _showDefaultPage('Transaksi Selesai')),
+            _buildMenuItem(Icons.disabled_by_default, Colors.red, 'Transaksi Batal', 'Daftar orderan yang telah dibatalkan', () => _showDefaultPage('Transaksi Batal')),
           ] else if (_reportTabFilterIndex == 1) ...[
-            // ITEM SUB-TAB LAPORAN KEUANGAN
-            _buildMenuItem(
-              Icons.account_balance_wallet,
-              Colors.blue,
-              'Arus Kas / Cashflow',
-              'Laporan pemasukan & pengeluaran toko',
-              () => _showDefaultPage('Arus Kas / Cashflow'),
-            ),
-            _buildMenuItem(
-              Icons.pie_chart,
-              Colors.purple,
-              'Laporan Laba Rugi',
-              'Ringkasan profit bersih operasional',
-              () => _showDefaultPage('Laporan Laba Rugi'),
-            ),
+            _buildMenuItem(Icons.account_balance_wallet, Colors.blue, 'Arus Kas / Cashflow', 'Laporan pemasukan & pengeluaran toko', () => _showDefaultPage('Arus Kas / Cashflow')),
+            _buildMenuItem(Icons.pie_chart, Colors.purple, 'Laporan Laba Rugi', 'Ringkasan profit bersih operasional', () => _showDefaultPage('Laporan Laba Rugi')),
           ] else if (_reportTabFilterIndex == 2) ...[
-            // ITEM SUB-TAB PELANGGAN (PERSIS SEPERTI GAMBAR)
-            _buildMenuItem(
-              Icons.people_alt,
-              Colors.blueGrey,
-              'Ringkasan Pelanggan',
-              'Total statistik dan gambaran umum customer',
-              () => _showDefaultPage('Ringkasan Pelanggan'),
-            ),
-            _buildMenuItem(
-              Icons.description,
-              Colors.blue,
-              'Detail Pelanggan',
-              'Daftar kontak & histori order tiap customer',
-              () => _showDefaultPage('Detail Pelanggan'),
-            ),
-            _buildMenuItem(
-              Icons.workspace_premium,
-              Colors.amber[800]!,
-              'Top Customer',
-              'Pelanggan paling sering / terbanyak order',
-              () => _showDefaultPage('Top Customer'),
-            ),
-            _buildMenuItem(
-              Icons.card_giftcard,
-              Colors.redAccent,
-              'Reward Pelanggan',
-              'Poin / program promo & kesetiaan',
-              () => _showDefaultPage('Reward Pelanggan'),
-            ),
+            _buildMenuItem(Icons.people_alt, Colors.blueGrey, 'Ringkasan Pelanggan', 'Total statistik dan gambaran umum customer', () => _showDefaultPage('Ringkasan Pelanggan')),
+            _buildMenuItem(Icons.description, Colors.blue, 'Detail Pelanggan', 'Daftar kontak & histori order tiap customer', () => _showDefaultPage('Detail Pelanggan')),
+            _buildMenuItem(Icons.workspace_premium, Colors.amber[800]!, 'Top Customer', 'Pelanggan paling sering / terbanyak order', () => _showDefaultPage('Top Customer')),
+            _buildMenuItem(Icons.card_giftcard, Colors.redAccent, 'Reward Pelanggan', 'Poin / program promo & kesetiaan', () => _showDefaultPage('Reward Pelanggan')),
           ],
         ],
       ),
     );
   }
 
-  // 4. PENGATURAN TAB
   Widget _buildPengaturanTab(SettingsProvider settings) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Pengaturan Toko & Kasir',
-            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
-          ),
-          SizedBox(height: 12),
-
+          const Text('Pengaturan Toko & Kasir', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.grey[50],
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.grey[200]!),
-            ),
+            decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey[200]!)),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Akun Aktif (Email)',
-                      style: TextStyle(fontSize: 9, color: Colors.grey),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      settings.emailToko,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    const Text('Akun Aktif (Email)', style: TextStyle(fontSize: 9, color: Colors.grey)),
+                    const SizedBox(height: 2),
+                    Text(settings.emailToko, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                   ],
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.amber,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    settings.userRole,
-                    style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(color: Colors.amber, borderRadius: BorderRadius.circular(4)),
+                  child: Text(settings.userRole, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
                 ),
               ],
             ),
           ),
-          SizedBox(height: 10),
-
+          const SizedBox(height: 10),
           _buildSettingCard(
             title: 'Kelola Daftar Layanan',
             subtitle: 'Tambah atau hapus layanan & harga laundry',
@@ -3709,8 +2272,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
             btnColor: const Color(0xFF2563EB),
             onPressed: () => _showKelolaLayananDialog(),
           ),
-          SizedBox(height: 10),
-
+          const SizedBox(height: 10),
           _buildSettingCard(
             title: 'Kelola Aroma Parfum',
             subtitle: 'Tambah atau hapus varian aroma parfum toko',
@@ -3718,8 +2280,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
             btnColor: Colors.green[700]!,
             onPressed: () => _showKelolaParfumDialog(),
           ),
-          SizedBox(height: 10),
-
+          const SizedBox(height: 10),
           _buildSettingCard(
             title: 'Kelola Akun',
             subtitle: 'Buka analitik traffic & manajemen toko',
@@ -3737,36 +2298,21 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
               );
             },
           ),
-
+          const SizedBox(height: 10),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.grey[50],
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: Colors.grey[200]!),
-            ),
+            decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey[200]!)),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: const [
-                Text(
-                  'Database Server',
-                  style: TextStyle(fontSize: 9, color: Colors.grey),
-                ),
+                Text('Database Server', style: TextStyle(fontSize: 9, color: Colors.grey)),
                 SizedBox(height: 2),
-                Text(
-                  'Supabase Cloud Multi-Tenant Active',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF2563EB),
-                  ),
-                ),
+                Text('PocketBase Cloud / Local Active', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF2563EB))),
               ],
             ),
           ),
           const SizedBox(height: 16),
-
           SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
@@ -3774,16 +2320,11 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                 foregroundColor: Colors.red,
                 side: const BorderSide(color: Colors.redAccent),
                 padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
               onPressed: () {},
               icon: const Icon(Icons.logout, size: 16),
-              label: const Text(
-                'LOG OUT DARI AKUN',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
-              ),
+              label: const Text('LOG OUT DARI AKUN', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
             ),
           ),
         ],
@@ -3791,57 +2332,25 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
     );
   }
 
-  // --- HELPER WIDGETS ---
-  Widget _buildStatCard(
-    String title,
-    String value,
-    Color bgColor,
-    Color textColor,
-    IconData icon,
-  ) {
+  Widget _buildStatCard(String title, String value, Color bgColor, Color textColor, IconData icon) {
     return Expanded(
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-        decoration: BoxDecoration(
-          color: bgColor,
-          borderRadius: BorderRadius.circular(8),
-        ),
+        decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(8)),
         child: Column(
           children: [
             Icon(icon, size: 16, color: textColor),
             const SizedBox(height: 2),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 7,
-                fontWeight: FontWeight.bold,
-                color: textColor,
-              ),
-              textAlign: TextAlign.center,
-            ),
+            Text(title, style: TextStyle(fontSize: 7, fontWeight: FontWeight.bold, color: textColor), textAlign: TextAlign.center),
             const SizedBox(height: 2),
-            Text(
-              value,
-              style: TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                color: textColor,
-              ),
-            ),
+            Text(value, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: textColor)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildStatGridItem(
-    String title,
-    String value,
-    Color bgColor,
-    Color textColor,
-    IconData icon,
-    VoidCallback onTap,
-  ) {
+  Widget _buildStatGridItem(String title, String value, Color bgColor, Color textColor, IconData icon, VoidCallback onTap) {
     return Expanded(
       child: Material(
         color: Colors.transparent,
@@ -3850,33 +2359,16 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
           borderRadius: BorderRadius.circular(8),
           child: Container(
             padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: bgColor,
-              borderRadius: BorderRadius.circular(8),
-            ),
+            decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(8)),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 7,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                      ),
-                    ),
+                    Text(title, style: const TextStyle(fontSize: 7, fontWeight: FontWeight.bold, color: Colors.grey)),
                     const SizedBox(height: 2),
-                    Text(
-                      value,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: textColor,
-                      ),
-                    ),
+                    Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: textColor)),
                   ],
                 ),
                 Icon(icon, size: 18, color: textColor),
@@ -3888,80 +2380,40 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
     );
   }
 
-  Widget _buildSubTab(
-    String label,
-    int index,
-    int selectedIndex,
-    Function(int) onTap,
-  ) {
+  Widget _buildSubTab(String label, int index, int selectedIndex, Function(int) onTap) {
     final bool isActive = selectedIndex == index;
     return Expanded(
       child: GestureDetector(
         onTap: () => onTap(index),
         child: Container(
           padding: const EdgeInsets.symmetric(vertical: 6),
-          decoration: BoxDecoration(
-            color: isActive ? const Color(0xFF2563EB) : Colors.transparent,
-            borderRadius: BorderRadius.circular(16),
-          ),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontSize: 9,
-              fontWeight: FontWeight.bold,
-              color: isActive ? Colors.white : Colors.black54,
-            ),
-          ),
+          decoration: BoxDecoration(color: isActive ? const Color(0xFF2563EB) : Colors.transparent, borderRadius: BorderRadius.circular(16)),
+          child: Text(label, textAlign: TextAlign.center, style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: isActive ? Colors.white : Colors.black54)),
         ),
       ),
     );
   }
 
-  Widget _buildMenuItem(
-    IconData icon,
-    Color iconColor,
-    String title,
-    String subtitle,
-    VoidCallback onTap,
-  ) {
+  Widget _buildMenuItem(IconData icon, Color iconColor, String title, String subtitle, VoidCallback onTap) {
     return Card(
       elevation: 0,
       margin: const EdgeInsets.only(bottom: 8),
-      shape: RoundedRectangleBorder(
-        side: BorderSide(color: Colors.grey[200]!),
-        borderRadius: BorderRadius.circular(10),
-      ),
+      shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey[200]!), borderRadius: BorderRadius.circular(10)),
       child: ListTile(
         dense: true,
         leading: Icon(icon, color: iconColor, size: 22),
-        title: Text(
-          title,
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
-        ),
-        subtitle: Text(
-          subtitle,
-          style: const TextStyle(fontSize: 9, color: Colors.grey),
-        ),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+        subtitle: Text(subtitle, style: const TextStyle(fontSize: 9, color: Colors.grey)),
         trailing: const Icon(Icons.chevron_right, size: 16, color: Colors.grey),
         onTap: onTap,
       ),
     );
   }
 
-  Widget _buildSettingCard({
-    required String title,
-    required String subtitle,
-    required Color bgColor,
-    required Color btnColor,
-    VoidCallback? onPressed,
-  }) {
+  Widget _buildSettingCard({required String title, required String subtitle, required Color bgColor, required Color btnColor, VoidCallback? onPressed}) {
     return Container(
       padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: bgColor,
-        borderRadius: BorderRadius.circular(10),
-      ),
+      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(10)),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -3969,18 +2421,9 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 11,
-                  ),
-                ),
+                Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
                 const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  style: const TextStyle(fontSize: 9, color: Colors.black54),
-                ),
+                Text(subtitle, style: const TextStyle(fontSize: 9, color: Colors.black54)),
               ],
             ),
           ),
@@ -3993,10 +2436,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             ),
             onPressed: onPressed ?? () {},
-            child: const Text(
-              'Buka',
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
-            ),
+            child: const Text('Buka', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -4008,9 +2448,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
       context: context,
       builder: (context) {
         return Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           child: Container(
             width: 380,
             padding: const EdgeInsets.all(20),
@@ -4021,13 +2459,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
-                    ),
+                    Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                     IconButton(
                       icon: const Icon(Icons.close, size: 18),
                       onPressed: () => Navigator.pop(context),
@@ -4041,25 +2473,11 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                 Center(
                   child: Column(
                     children: [
-                      Icon(
-                        Icons.construction,
-                        size: 40,
-                        color: Colors.amber[800],
-                      ),
+                      Icon(Icons.construction, size: 40, color: Colors.amber[800]),
                       const SizedBox(height: 10),
-                      Text(
-                        'Halaman $title',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                        ),
-                      ),
+                      Text('Halaman $title', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
                       const SizedBox(height: 4),
-                      const Text(
-                        'Halaman ini siap untuk diisi dengan fitur & UI baru.',
-                        style: TextStyle(fontSize: 10, color: Colors.grey),
-                        textAlign: TextAlign.center,
-                      ),
+                      const Text('Halaman ini siap untuk diisi dengan fitur & UI baru.', style: TextStyle(fontSize: 10, color: Colors.grey), textAlign: TextAlign.center),
                     ],
                   ),
                 ),
@@ -4072,7 +2490,6 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
     );
   }
 
-  // --- FUNGSI BERANDA TAB YANG HILANG ---
   Widget _buildBerandaTab() {
     return SingleChildScrollView(
       physics: const BouncingScrollPhysics(),
@@ -4080,14 +2497,9 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          
-          // RINGKASAN CUCIAN
           Card(
             elevation: 0,
-            shape: RoundedRectangleBorder(
-              side: BorderSide(color: Colors.grey[200]!),
-              borderRadius: BorderRadius.circular(12),
-            ),
+            shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey[200]!), borderRadius: BorderRadius.circular(12)),
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(
@@ -4098,32 +2510,16 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                     children: [
                       Row(
                         children: const [
-                          Icon(
-                            Icons.assignment_outlined,
-                            color: Color(0xFF2563EB),
-                            size: 16,
-                          ),
+                          Icon(Icons.assignment_outlined, color: Color(0xFF2563EB), size: 16),
                           SizedBox(width: 6),
-                          Text(
-                            'RINGKASAN CUCIAN',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          Text('RINGKASAN CUCIAN', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                         ],
                       ),
                       Row(
                         children: const [
-                          CircleAvatar(
-                            radius: 3,
-                            backgroundColor: Colors.green,
-                          ),
+                          CircleAvatar(radius: 3, backgroundColor: Colors.green),
                           SizedBox(width: 4),
-                          Text(
-                            'Realtime',
-                            style: TextStyle(fontSize: 9, color: Colors.grey),
-                          ),
+                          Text('Realtime', style: TextStyle(fontSize: 9, color: Colors.grey)),
                         ],
                       ),
                     ],
@@ -4138,17 +2534,8 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                         const Color(0xFF2563EB),
                         Icons.local_laundry_service,
                         () {
-                          final listAktif = _ordersHariIni
-                              .where(
-                                (o) =>
-                                    o['status'] == 'Antrian' ||
-                                    o['status'] == 'Proses',
-                              )
-                              .toList();
-                          _showRingkasanOrderDialog(
-                            'Cucian Aktif (Antrian & Proses)',
-                            listAktif,
-                          );
+                          final listAktif = _ordersHariIni.where((o) => o['status'] == 'Antrian' || o['status'] == 'Proses').toList();
+                          _showRingkasanOrderDialog('Cucian Aktif (Antrian & Proses)', listAktif);
                         },
                       ),
                       const SizedBox(width: 8),
@@ -4159,17 +2546,8 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                         const Color(0xFFD97706),
                         Icons.timer_outlined,
                         () {
-                          final listHarusSelesai = _ordersHariIni
-                              .where(
-                                (o) =>
-                                    o['status'] != 'Selesai' &&
-                                    o['status'] != 'Batal',
-                              )
-                              .toList();
-                          _showRingkasanOrderDialog(
-                            'Harus Selesai Hari Ini',
-                            listHarusSelesai,
-                          );
+                          final listHarusSelesai = _ordersHariIni.where((o) => o['status'] != 'Selesai' && o['status'] != 'Batal').toList();
+                          _showRingkasanOrderDialog('Harus Selesai Hari Ini', listHarusSelesai);
                         },
                       ),
                     ],
@@ -4185,10 +2563,7 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                         Icons.warning_amber_rounded,
                         () {
                           final listTerlambat = <Map<String, dynamic>>[];
-                          _showRingkasanOrderDialog(
-                            'Cucian Terlambat',
-                            listTerlambat,
-                          );
+                          _showRingkasanOrderDialog('Cucian Terlambat', listTerlambat);
                         },
                       ),
                       const SizedBox(width: 8),
@@ -4199,13 +2574,8 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                         const Color(0xFF16A34A),
                         Icons.check_circle_outline,
                         () {
-                          final listSelesai = _ordersHariIni
-                              .where((o) => o['status'] == 'Selesai')
-                              .toList();
-                          _showRingkasanOrderDialog(
-                            'Daftar Cucian Selesai',
-                            listSelesai,
-                          );
+                          final listSelesai = _ordersHariIni.where((o) => o['status'] == 'Selesai').toList();
+                          _showRingkasanOrderDialog('Daftar Cucian Selesai', listSelesai);
                         },
                       ),
                     ],
@@ -4215,14 +2585,9 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
             ),
           ),
           const SizedBox(height: 12),
-
-          // KEUANGAN HARI INI
           Card(
             elevation: 0,
-            shape: RoundedRectangleBorder(
-              side: BorderSide(color: Colors.grey[200]!),
-              borderRadius: BorderRadius.circular(12),
-            ),
+            shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey[200]!), borderRadius: BorderRadius.circular(12)),
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(
@@ -4231,53 +2596,24 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: const [
-                      Text(
-                        '💸 KEUANGAN HARI INI',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        'Hari Ini',
-                        style: TextStyle(fontSize: 9, color: Colors.grey),
-                      ),
+                      Text('💸 KEUANGAN HARI INI', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('Hari Ini', style: TextStyle(fontSize: 9, color: Colors.grey)),
                     ],
                   ),
                   const SizedBox(height: 12),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        'Omset Hari Ini',
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
-                      ),
-                      Text(
-                        'Rp ${_totalOmsetHariIni.toInt()}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Color(0xFF2563EB),
-                        ),
-                      ),
+                      const Text('Omset Hari Ini', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Text('Rp ${_totalOmsetHariIni.toInt()}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF2563EB))),
                     ],
                   ),
                   const Divider(height: 16),
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: const [
-                      Text(
-                        'Pengeluaran Hari Ini',
-                        style: TextStyle(fontSize: 11, color: Colors.grey),
-                      ),
-                      Text(
-                        'Rp 0',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.red,
-                        ),
-                      ),
+                      Text('Pengeluaran Hari Ini', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                      Text('Rp 0', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.red)),
                     ],
                   ),
                 ],
@@ -4285,14 +2621,9 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
             ),
           ),
           const SizedBox(height: 12),
-
-          // CARD MASUK HARI INI
           Card(
             elevation: 0,
-            shape: RoundedRectangleBorder(
-              side: BorderSide(color: Colors.grey[200]!),
-              borderRadius: BorderRadius.circular(12),
-            ),
+            shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey[200]!), borderRadius: BorderRadius.circular(12)),
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(
@@ -4301,17 +2632,8 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        '☕ Masuk Hari Ini',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      Text(
-                        '${_ordersHariIni.length} Order',
-                        style: const TextStyle(fontSize: 9, color: Colors.grey),
-                      ),
+                      const Text('☕ Masuk Hari Ini', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                      Text('${_ordersHariIni.length} Order', style: const TextStyle(fontSize: 9, color: Colors.grey)),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -4320,30 +2642,13 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                           child: Container(
                             width: double.infinity,
                             padding: const EdgeInsets.all(20),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[50],
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: Colors.grey[200]!),
-                            ),
+                            decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(10), border: Border.all(color: Colors.grey[200]!)),
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
                               children: const [
-                                Text(
-                                  'Belum Ada Masuk Hari Ini',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.grey,
-                                  ),
-                                ),
+                                Text('Belum Ada Masuk Hari Ini', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.grey)),
                                 SizedBox(height: 4),
-                                Text(
-                                  'Transaksi hari ini akan muncul di sini',
-                                  style: TextStyle(
-                                    fontSize: 9,
-                                    color: Colors.grey,
-                                  ),
-                                ),
+                                Text('Transaksi hari ini akan muncul di sini', style: TextStyle(fontSize: 9, color: Colors.grey)),
                               ],
                             ),
                           ),
@@ -4357,57 +2662,27 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
                             return Card(
                               elevation: 0,
                               margin: const EdgeInsets.only(bottom: 8),
-                              shape: RoundedRectangleBorder(
-                                side: BorderSide(color: Colors.grey[200]!),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
+                              shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey[200]!), borderRadius: BorderRadius.circular(8)),
                               child: ListTile(
                                 dense: true,
                                 leading: const CircleAvatar(
                                   radius: 14,
                                   backgroundColor: Color(0xFFEFF6FF),
-                                  child: Icon(
-                                    Icons.local_laundry_service,
-                                    color: Color(0xFF2563EB),
-                                    size: 14,
-                                  ),
+                                  child: Icon(Icons.local_laundry_service, color: Color(0xFF2563EB), size: 14),
                                 ),
-                                title: Text(
-                                  order['customer'] ?? '-',
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 11,
-                                  ),
-                                ),
-                                subtitle: Text(
-                                  '${order['itemCount']} Layanan • Rp ${(order['total'] as double).toInt()}',
-                                  style: const TextStyle(
-                                    fontSize: 9,
-                                    color: Colors.grey,
-                                  ),
-                                ),
+                                title: Text(order['customer'] ?? '-', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+                                subtitle: Text('${order['itemCount']} Layanan • Rp ${(order['total'] as double).toInt()}', style: const TextStyle(fontSize: 9, color: Colors.grey)),
                                 trailing: ElevatedButton(
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: const Color(0xFFFEF3C7),
                                     foregroundColor: const Color(0xFFD97706),
                                     elevation: 0,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 10,
-                                      vertical: 4,
-                                    ),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                     minimumSize: Size.zero,
-                                    tapTargetSize:
-                                        MaterialTapTargetSize.shrinkWrap,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                                   ),
-                                  onPressed: () =>
-                                      _showKonfirmasiBatalDialog(order),
-                                  child: const Text(
-                                    'Batal',
-                                    style: TextStyle(
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
+                                  onPressed: () => _showKonfirmasiBatalDialog(order),
+                                  child: const Text('Batal', style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
                                 ),
                                 onTap: () => _showDetailOrderDialog(order),
                               ),
@@ -4423,10 +2698,8 @@ class _KasirHomeScreenState extends State<KasirHomeScreen> {
     );
   }
 
-// ==========================================
-// KELAS ACCOUNTSETTINGS (FULL REALTIME SUPABASE & STATE)
-// ==========================================
 }
+
 class AccountSettingsScreen extends StatefulWidget {
   final List<Map<String, dynamic>> ordersHariIni;
   final String userEmail;
@@ -4446,7 +2719,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
   double _targetOmset = 15000000;
   bool _isLoadingTarget = true;
 
-  // Realtime Permission Switches State
   bool _isManager = false;
   bool _canViewReport = true;
   bool _canManageServices = false;
@@ -4465,187 +2737,67 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     super.dispose();
   }
 
-  // 1. TARIK DATA DARI SERVER LOKAL POCKETBASE
   Future<void> _loadSettingsFromSupabase() async {
-      try {
-        print('>>> MEMUAT DATA DARI POCKETBASE LOKAL...');
-        
-        // Ambil semua data store_settings tanpa filter email dulu (biar pasti dapet data pertama)
-        final result = await pb.collection('store_settings').getList(
-          page: 1,
-          perPage: 1,
-        );
-  
-        print('>>> HASIL FETCH POCKETBASE: ${result.items.length} record ditemukan');
-  
-        if (result.items.isNotEmpty) {
-          final data = result.items.first.data;
-          print('>>> DATA TERAMBIL: $data');
-  
-          if (mounted) {
-            setState(() {
-              _targetOmset = (data['target_omset'] as num?)?.toDouble() ?? 15000000;
-              _isManager = data['is_manager'] ?? false;
-              _canViewReport = data['can_view_report'] ?? true;
-              _canManageServices = data['can_manage_services'] ?? false;
-              _canRecordExpense = data['can_record_expense'] ?? true;
-              _canEditDeleteOrder = data['can_edit_delete_order'] ?? false;
-            });
-          }
-        } else {
-          print('>>> POCKETBASE KOSONG: Menggunakan nilai default');
-        }
-      } catch (e) {
-        print('>>> ERROR LOAD POCKETBASE: $e');
-      } finally {
-        if (mounted) setState(() => _isLoadingTarget = false);
-      }
-    }
-
-  // 2. SIMPAN TARGET OMSET REALTIME KE SERVER LOKAL
-  Future<void> _updateTarget() async {
-      final cleanInput = _targetController.text.replaceAll('.', '').replaceAll(',', '');
-      final newTarget = double.tryParse(cleanInput);
-  
-      if (newTarget != null && newTarget > 0) {
-        try {
-          print('>>> MEMPROSES SIMPAN TARGET: $newTarget');
-  
-          // 1. Cek apakah record sudah ada
-          final result = await pb.collection('store_settings').getList(
-            page: 1,
-            perPage: 1,
-          );
-  
-          if (result.items.isNotEmpty) {
-            // UPDATE DATA YANG SUDAH ADA
-            final id = result.items.first.id;
-            await pb.collection('store_settings').update(id, body: {
-              'target_omset': newTarget,
-            });
-            print('>>> BERHASIL UPDATE RECORD ID: $id');
-          } else {
-            // BUAT DATA BARU JIKA TABEL MASIH KOSONG
-            final newRecord = await pb.collection('store_settings').create(body: {
-              'user_email': widget.userEmail,
-              'target_omset': newTarget,
-            });
-            print('>>> BERHASIL CREATE RECORD BARU ID: ${newRecord.id}');
-          }
-  
-          if (mounted) {
-            setState(() {
-              _targetOmset = newTarget;
-            });
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Target tersimpan di Server Lokal: Rp ${newTarget.toInt()}'),
-                backgroundColor: const Color(0xFF16A34A),
-              ),
-            );
-          }
-          _targetController.clear();
-        } catch (e) {
-          print('>>> ERROR SAAT SIMPAN KE POCKETBASE: $e');
-        }
-      }
-    }
-
-  // 1. TARIK DATA SETTINGS & PERMISSION REALTIME DARI SUPABASE
-  /* Future<void> _loadSettingsFromSupabase() async {
     try {
-      final response = await Supabase.instance.client
-          .from('store_settings')
-          .select()
-          .eq('user_email', widget.userEmail)
-          .maybeSingle();
-
-      if (response != null) {
-        setState(() {
-          _targetOmset =
-              (response['target_omset'] as num?)?.toDouble() ?? 15000000;
-          _isManager = response['is_manager'] ?? false;
-          _canViewReport = response['can_view_report'] ?? true;
-          _canManageServices = response['can_manage_services'] ?? false;
-          _canRecordExpense = response['can_record_expense'] ?? true;
-          _canEditDeleteOrder = response['can_edit_delete_order'] ?? false;
-        });
+      final result = await pb.collection('store_settings').getList(page: 1, perPage: 1);
+      if (result.items.isNotEmpty) {
+        final data = result.items.first.data;
+        if (mounted) {
+          setState(() {
+            _targetOmset = (data['target_omset'] as num?)?.toDouble() ?? 15000000;
+            _isManager = data['is_manager'] ?? false;
+            _canViewReport = data['can_view_report'] ?? true;
+            _canManageServices = data['can_manage_services'] ?? false;
+            _canRecordExpense = data['can_record_expense'] ?? true;
+            _canEditDeleteOrder = data['can_edit_delete_order'] ?? false;
+          });
+        }
       }
     } catch (e) {
-      debugPrint('Gagal sync data dari Supabase, memuat dari memori lokal: $e');
-      final prefs = await SharedPreferences.getInstance();
-      setState(() {
-        _targetOmset = prefs.getDouble('target_omset_bulanan') ?? 15000000;
-      });
+      debugPrint('ERROR LOAD POCKETBASE: $e');
     } finally {
       if (mounted) setState(() => _isLoadingTarget = false);
     }
   }
 
-  // 2. SIMPAN TARGET OMSET REALTIME KE SUPABASE + LOKAL
   Future<void> _updateTarget() async {
-    final cleanInput = _targetController.text
-        .replaceAll('.', '')
-        .replaceAll(',', '');
+    final cleanInput = _targetController.text.replaceAll('.', '').replaceAll(',', '');
     final newTarget = double.tryParse(cleanInput);
 
     if (newTarget != null && newTarget > 0) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setDouble('target_omset_bulanan', newTarget);
-
       try {
-        await Supabase.instance.client.from('store_settings').upsert({
-          'user_email': widget.userEmail,
-          'target_omset': newTarget,
-          'updated_at': DateTime.now().toIso8601String(),
-        });
-      } catch (e) {
-        debugPrint('Error sync target ke Supabase: $e');
-      }
+        final result = await pb.collection('store_settings').getList(page: 1, perPage: 1);
+        if (result.items.isNotEmpty) {
+          final id = result.items.first.id;
+          await pb.collection('store_settings').update(id, body: {'target_omset': newTarget});
+        } else {
+          await pb.collection('store_settings').create(body: {'user_email': widget.userEmail, 'target_omset': newTarget});
+        }
 
-      if (mounted) {
-        setState(() => _targetOmset = newTarget);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Target omset tersimpan ke Supabase: Rp ${newTarget.toInt()}',
+        if (mounted) {
+          setState(() => _targetOmset = newTarget);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Target tersimpan di Server Lokal: Rp ${newTarget.toInt()}'),
+              backgroundColor: const Color(0xFF16A34A),
             ),
-            backgroundColor: const Color(0xFF16A34A),
-          ),
-        );
+          );
+        }
+        _targetController.clear();
+      } catch (e) {
+        debugPrint('ERROR SAAT SIMPAN KE POCKETBASE: $e');
       }
-      _targetController.clear();
     }
   }
 
-  // 3. UPDATE PERMISSION HAK AKSES REALTIME KE SUPABASE
   Future<void> _togglePermission(String key, bool value) async {
     try {
-      await Supabase.instance.client.from('store_settings').upsert({
-        'user_email': widget.userEmail,
-        key: value,
-        'updated_at': DateTime.now().toIso8601String(),
-      });
-    } catch (e) {
-      debugPrint('Gagal update permission ke Supabase: $e');
-    }
-  }*/
-  Future<void> _togglePermission(String key, bool value) async {
-    try {
-      // Cek apakah record store_settings user ini sudah ada
-      final existing = await pb
-          .collection('store_settings')
-          .getList(filter: 'user_email = "${widget.userEmail}"');
-
+      final existing = await pb.collection('store_settings').getList(filter: 'user_email = "${widget.userEmail}"');
       if (existing.items.isNotEmpty) {
         final recordId = existing.items.first.id;
-        await pb
-            .collection('store_settings')
-            .update(recordId, body: {key: value});
+        await pb.collection('store_settings').update(recordId, body: {key: value});
       } else {
-        await pb
-            .collection('store_settings')
-            .create(body: {'user_email': widget.userEmail, key: value});
+        await pb.collection('store_settings').create(body: {'user_email': widget.userEmail, key: value});
       }
     } catch (e) {
       debugPrint('Gagal update permission ke PocketBase: $e');
@@ -4654,7 +2806,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // ACCUMULATE OMSET HARI INI SECARA REALTIME DARI DATA SUPABASE
     double omsetTercapaiReal = widget.ordersHariIni.fold(0.0, (sum, order) {
       if (order['status'] != 'Batal') {
         return sum + ((order['total'] as num?)?.toDouble() ?? 0.0);
@@ -4662,9 +2813,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
       return sum;
     });
 
-    double persentase = _targetOmset > 0
-        ? (omsetTercapaiReal / _targetOmset).clamp(0.0, 1.0)
-        : 0.0;
+    double persentase = _targetOmset > 0 ? (omsetTercapaiReal / _targetOmset).clamp(0.0, 1.0) : 0.0;
     int persenInt = (persentase * 100).toInt();
 
     return Scaffold(
@@ -4679,19 +2828,9 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            const Text(
-              'Kelola Akun & Analitik',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
+            const Text('Kelola Akun & Analitik', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold)),
             const SizedBox(height: 2),
-            Text(
-              widget.userEmail,
-              style: const TextStyle(color: Colors.white70, fontSize: 9),
-            ),
+            Text(widget.userEmail, style: const TextStyle(color: Colors.white70, fontSize: 9)),
           ],
         ),
         centerTitle: true,
@@ -4702,24 +2841,16 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // PANEL TRAFFIC KEUANGAN 24 JAM
             const Center(
               child: Text(
                 'Geser ke kanan/kiri untuk melihat 24 jam lengkap 👈',
-                style: TextStyle(
-                  fontSize: 9,
-                  color: Colors.grey,
-                  fontStyle: FontStyle.italic,
-                ),
+                style: TextStyle(fontSize: 9, color: Colors.grey, fontStyle: FontStyle.italic),
               ),
             ),
             const SizedBox(height: 8),
             Card(
               elevation: 0,
-              shape: RoundedRectangleBorder(
-                side: BorderSide(color: Colors.grey[200]!),
-                borderRadius: BorderRadius.circular(12),
-              ),
+              shape: RoundedRectangleBorder(side: BorderSide(color: Colors.grey[200]!), borderRadius: BorderRadius.circular(12)),
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -4728,31 +2859,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: const [
-                        Text(
-                          'Pergerakan Omset (Realtime)',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          '24 Jam',
-                          style: TextStyle(
-                            fontSize: 9,
-                            color: Colors.blue,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
+                        Text('Pergerakan Omset (Realtime)', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                        Text('24 Jam', style: TextStyle(fontSize: 9, color: Colors.blue, fontWeight: FontWeight.bold)),
                       ],
                     ),
                     const SizedBox(height: 16),
                     Container(
                       height: 120,
                       width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[50],
-                        borderRadius: BorderRadius.circular(8),
-                      ),
+                      decoration: BoxDecoration(color: Colors.grey[50], borderRadius: BorderRadius.circular(8)),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
@@ -4770,15 +2885,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
               ),
             ),
             const SizedBox(height: 16),
-
-            // PANEL TARGET OMSET BULANAN (REALTIME SYNC)
             Card(
               elevation: 0,
               color: const Color(0xFFF0FDF4),
-              shape: RoundedRectangleBorder(
-                side: BorderSide(color: Colors.green[100]!),
-                borderRadius: BorderRadius.circular(12),
-              ),
+              shape: RoundedRectangleBorder(side: BorderSide(color: Colors.green[100]!), borderRadius: BorderRadius.circular(12)),
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Column(
@@ -4790,41 +2900,18 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                         Row(
                           children: const [
                             Text('🎯 ', style: TextStyle(fontSize: 12)),
-                            Text(
-                              'TARGET OMSET BULANAN',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.black87,
-                              ),
-                            ),
+                            Text('TARGET OMSET BULANAN', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black87)),
                           ],
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF16A34A),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Text(
-                            '$persenInt%',
-                            style: const TextStyle(
-                              fontSize: 9,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(color: const Color(0xFF16A34A), borderRadius: BorderRadius.circular(10)),
+                          child: Text('$persenInt%', style: const TextStyle(fontSize: 9, color: Colors.white, fontWeight: FontWeight.bold)),
                         ),
                       ],
                     ),
                     const SizedBox(height: 4),
-                    const Text(
-                      'Pantau progres pencapaian target toko bulan ini',
-                      style: TextStyle(fontSize: 9, color: Colors.grey),
-                    ),
+                    const Text('Pantau progres pencapaian target toko bulan ini', style: TextStyle(fontSize: 9, color: Colors.grey)),
                     const SizedBox(height: 12),
                     ClipRRect(
                       borderRadius: BorderRadius.circular(10),
@@ -4832,31 +2919,15 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                         value: persentase,
                         minHeight: 10,
                         backgroundColor: Colors.green[100],
-                        valueColor: const AlwaysStoppedAnimation<Color>(
-                          Color(0xFF16A34A),
-                        ),
+                        valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF16A34A)),
                       ),
                     ),
                     const SizedBox(height: 12),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(
-                          'Tercapai: Rp ${omsetTercapaiReal.toInt()}',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF16A34A),
-                          ),
-                        ),
-                        Text(
-                          'Target: Rp ${_targetOmset.toInt()}',
-                          style: const TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                          ),
-                        ),
+                        Text('Tercapai: Rp ${omsetTercapaiReal.toInt()}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF16A34A))),
+                        Text('Target: Rp ${_targetOmset.toInt()}', style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.black87)),
                       ],
                     ),
                     const SizedBox(height: 12),
@@ -4871,28 +2942,12 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                               style: const TextStyle(fontSize: 11),
                               decoration: InputDecoration(
                                 hintText: 'Set Target (Rp)',
-                                hintStyle: const TextStyle(
-                                  fontSize: 10,
-                                  color: Colors.grey,
-                                ),
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 8,
-                                ),
+                                hintStyle: const TextStyle(fontSize: 10, color: Colors.grey),
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                                 fillColor: Colors.white,
                                 filled: true,
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: Colors.green[200]!,
-                                  ),
-                                ),
-                                enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8),
-                                  borderSide: BorderSide(
-                                    color: Colors.green[200]!,
-                                  ),
-                                ),
+                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.green[200]!)),
+                                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.green[200]!)),
                               ),
                             ),
                           ),
@@ -4905,18 +2960,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                               backgroundColor: const Color(0xFF16A34A),
                               foregroundColor: Colors.white,
                               elevation: 0,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8),
-                              ),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                             ),
                             onPressed: _updateTarget,
-                            child: const Text(
-                              'Simpan',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            child: const Text('Simpan', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                           ),
                         ),
                       ],
@@ -4926,8 +2973,6 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
               ),
             ),
             const SizedBox(height: 20),
-
-            // SUB-KATEGORI 1: KELOLA SUB-AKUN KASIR
             _buildSubCategoryExpansionCard(
               icon: Icons.people_outline,
               title: 'Kelola Sub-Akun Kasir',
@@ -4942,55 +2987,29 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          const Text(
-                            'Daftar Kasir Aktif',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          const Text('Daftar Kasir Aktif', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
                           ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF2563EB),
                               foregroundColor: Colors.white,
                               elevation: 0,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 10,
-                                vertical: 6,
-                              ),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(6),
-                              ),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
                             ),
                             onPressed: () {},
                             icon: const Icon(Icons.add, size: 12),
-                            label: const Text(
-                              'Buat Kasir',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            label: const Text('Buat Kasir', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
                           ),
                         ],
                       ),
                       const SizedBox(height: 12),
-                      const Text(
-                        'Belum ada kasir.',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.grey,
-                          fontStyle: FontStyle.italic,
-                        ),
-                      ),
+                      const Text('Belum ada kasir.', style: TextStyle(fontSize: 10, color: Colors.grey, fontStyle: FontStyle.italic)),
                     ],
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 8),
-
-            // SUB-KATEGORI 2: PENGATURAN AKSES & HAK KASIR (REALTIME TOGGLE)
             _buildSubCategoryExpansionCard(
               icon: Icons.settings_outlined,
               title: 'Pengaturan Akses & Hak Kasir',
@@ -5002,11 +3021,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                     children: [
                       Container(
                         margin: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFFBEB),
-                          border: Border.all(color: const Color(0xFFFDE68A)),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
+                        decoration: BoxDecoration(color: const Color(0xFFFFFBEB), border: Border.all(color: const Color(0xFFFDE68A)), borderRadius: BorderRadius.circular(8)),
                         child: SwitchListTile(
                           dense: true,
                           value: _isManager,
@@ -5015,62 +3030,29 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
                             setState(() => _isManager = val);
                             _togglePermission('is_manager', val);
                           },
-                          title: const Text(
-                            '👑 Jadikan Kasir sebagai Manager',
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          subtitle: const Text(
-                            'Akses penuh ke seluruh fitur aplikasi',
-                            style: TextStyle(fontSize: 9, color: Colors.grey),
-                          ),
+                          title: const Text('👑 Jadikan Kasir sebagai Manager', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                          subtitle: const Text('Akses penuh ke seluruh fitur aplikasi', style: TextStyle(fontSize: 9, color: Colors.grey)),
                         ),
                       ),
-                      _buildSwitchPermissionTile(
-                        '📊',
-                        'Akses Menu Laporan & Report',
-                        'Kasir dapat melihat rekap omset & keuangan',
-                        _canViewReport,
-                        (val) {
-                          setState(() => _canViewReport = val);
-                          _togglePermission('can_view_report', val);
-                        },
-                      ),
+                      _buildSwitchPermissionTile('📊', 'Akses Menu Laporan & Report', 'Kasir dapat melihat rekap omset & keuangan', _canViewReport, (val) {
+                        setState(() => _canViewReport = val);
+                        _togglePermission('can_view_report', val);
+                      }),
                       const Divider(height: 1),
-                      _buildSwitchPermissionTile(
-                        '📦',
-                        'Akses Kelola Layanan & Harga',
-                        'Kasir dapat menambah/menghapus paket',
-                        _canManageServices,
-                        (val) {
-                          setState(() => _canManageServices = val);
-                          _togglePermission('can_manage_services', val);
-                        },
-                      ),
+                      _buildSwitchPermissionTile('📦', 'Akses Kelola Layanan & Harga', 'Kasir dapat menambah/menghapus paket', _canManageServices, (val) {
+                        setState(() => _canManageServices = val);
+                        _togglePermission('can_manage_services', val);
+                      }),
                       const Divider(height: 1),
-                      _buildSwitchPermissionTile(
-                        '💸',
-                        'Akses Catat Pengeluaran Toko',
-                        'Kasir dapat mencatat biaya operasional',
-                        _canRecordExpense,
-                        (val) {
-                          setState(() => _canRecordExpense = val);
-                          _togglePermission('can_record_expense', val);
-                        },
-                      ),
+                      _buildSwitchPermissionTile('💸', 'Akses Catat Pengeluaran Toko', 'Kasir dapat mencatat biaya operasional', _canRecordExpense, (val) {
+                        setState(() => _canRecordExpense = val);
+                        _togglePermission('can_record_expense', val);
+                      }),
                       const Divider(height: 1),
-                      _buildSwitchPermissionTile(
-                        '❌',
-                        'Akses Edit / Batalkan Order',
-                        'Kasir dapat membatalkan atau mengedit order',
-                        _canEditDeleteOrder,
-                        (val) {
-                          setState(() => _canEditDeleteOrder = val);
-                          _togglePermission('can_edit_delete_order', val);
-                        },
-                      ),
+                      _buildSwitchPermissionTile('❌', 'Akses Edit / Batalkan Order', 'Kasir dapat membatalkan atau mengedit order', _canEditDeleteOrder, (val) {
+                        setState(() => _canEditDeleteOrder = val);
+                        _togglePermission('can_edit_delete_order', val);
+                      }),
                     ],
                   ),
                 ),
@@ -5088,14 +3070,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         Container(width: 2, height: 8, color: color),
-        Container(
-          width: 10,
-          height: height,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
+        Container(width: 10, height: height, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
         Container(width: 2, height: 8, color: color),
         const SizedBox(height: 4),
         Text(label, style: const TextStyle(fontSize: 7, color: Colors.grey)),
@@ -5103,35 +3078,17 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     );
   }
 
-  Widget _buildSubCategoryExpansionCard({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required List<Widget> children,
-  }) {
+  Widget _buildSubCategoryExpansionCard({required IconData icon, required String title, required String subtitle, required List<Widget> children}) {
     return Card(
       elevation: 0,
       color: const Color(0xFFF4F6FF),
-      shape: RoundedRectangleBorder(
-        side: BorderSide(color: Colors.blue[100]!),
-        borderRadius: BorderRadius.circular(10),
-      ),
+      shape: RoundedRectangleBorder(side: BorderSide(color: Colors.blue[100]!), borderRadius: BorderRadius.circular(10)),
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
           leading: Icon(icon, color: const Color(0xFF2563EB), size: 18),
-          title: Text(
-            title,
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 11,
-              color: Colors.black87,
-            ),
-          ),
-          subtitle: Text(
-            subtitle,
-            style: const TextStyle(fontSize: 8, color: Colors.grey),
-          ),
+          title: Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black87)),
+          subtitle: Text(subtitle, style: const TextStyle(fontSize: 8, color: Colors.grey)),
           iconColor: const Color(0xFF2563EB),
           collapsedIconColor: const Color(0xFF2563EB),
           children: children,
@@ -5140,13 +3097,7 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     );
   }
 
-  Widget _buildSwitchPermissionTile(
-    String icon,
-    String title,
-    String subtitle,
-    bool value,
-    ValueChanged<bool> onChanged,
-  ) {
+  Widget _buildSwitchPermissionTile(String icon, String title, String subtitle, bool value, ValueChanged<bool> onChanged) {
     return SwitchListTile(
       dense: true,
       value: value,
@@ -5156,126 +3107,10 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
         children: [
           Text(icon, style: const TextStyle(fontSize: 12)),
           const SizedBox(width: 6),
-          Text(
-            title,
-            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
-          ),
+          Text(title, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
         ],
       ),
-      subtitle: Text(
-        subtitle,
-        style: const TextStyle(fontSize: 8, color: Colors.grey),
-      ),
+      subtitle: Text(subtitle, style: const TextStyle(fontSize: 8, color: Colors.grey)),
     );
   }
 }
-
-/* Helper Widget Candlestick
-Widget _buildCandleStickItem(double height, bool isUp, String label) {
-  final color = isUp ? const Color(0xFF16A34A) : const Color(0xFFDC2626);
-  return Column(
-    mainAxisAlignment: MainAxisAlignment.end,
-    children: [
-      Container(width: 2, height: 8, color: color),
-      Container(
-        width: 10,
-        height: height,
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(2),
-        ),
-      ),
-      Container(width: 2, height: 8, color: color),
-      const SizedBox(height: 4),
-      Text(label, style: const TextStyle(fontSize: 7, color: Colors.grey)),
-    ],
-  );
-}
-
-// Helper Widget Card Sub-Kategori dengan Panah Dropdown (ExpansionTile)
-Widget _buildSubCategoryExpansionCard({
-  required IconData icon,
-  required String title,
-  required String subtitle,
-  required List<Widget> children,
-}) {
-  return Card(
-    elevation: 0,
-    color: const Color(0xFFF4F6FF),
-    shape: RoundedRectangleBorder(
-      side: BorderSide(color: Colors.blue[100]!),
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: Builder(
-      builder: (context) {
-        return Theme(
-          data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-          child: ExpansionTile(
-            leading: Icon(icon, color: const Color(0xFF2563EB), size: 18),
-            title: Text(
-              title,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 11,
-                color: Colors.black87,
-              ),
-            ),
-            subtitle: Text(
-              subtitle,
-              style: const TextStyle(fontSize: 8, color: Colors.grey),
-            ),
-            iconColor: const Color(0xFF2563EB),
-            collapsedIconColor: const Color(0xFF2563EB),
-            children: children,
-          ),
-        );
-      },
-    ),
-  );
-}
-
-// Helper Widget Sub-Option di dalam Dropdown Sub-Kategori
-Widget _buildSubAccountOptionTile(String title, VoidCallback onTap) {
-  return Container(
-    color: Colors.white,
-    child: ListTile(
-      dense: true,
-      title: Text(
-        title,
-        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w500),
-      ),
-      trailing: const Icon(Icons.chevron_right, size: 14, color: Colors.grey),
-      onTap: onTap,
-    ),
-  );
-}
-
-// Helper Tile Switch Izin
-Widget _buildSwitchPermissionTile({
-  required String icon,
-  required String title,
-  required String subtitle,
-  required bool value,
-  required ValueChanged<bool> onChanged,
-}) {
-  return SwitchListTile(
-    dense: true,
-    value: value,
-    activeColor: const Color(0xFF2563EB),
-    onChanged: onChanged,
-    title: Row(
-      children: [
-        Text(icon, style: const TextStyle(fontSize: 12)),
-        const SizedBox(width: 6),
-        Text(
-          title,
-          style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
-        ),
-      ],
-    ),
-    subtitle: Text(
-      subtitle,
-      style: const TextStyle(fontSize: 8, color: Colors.grey),
-    ),
-  );
-}*/
